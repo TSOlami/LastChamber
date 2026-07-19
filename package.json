@@ -1,0 +1,13 @@
+{
+  "name": "last-chamber",
+  "version": "0.6.0",
+  "description": "A parlor game of nerve. Solo, hot seat, and online rooms.",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test test/engine.test.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

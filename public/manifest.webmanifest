@@ -1,0 +1,13 @@
+{
+  "name": "Last Chamber",
+  "short_name": "Last Chamber",
+  "description": "A parlor game of nerve. Live and blank shells, public counts, secret order.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f0d0a",
+  "theme_color": "#0f0d0a",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

@@ -1,0 +1,6 @@
+node_modules
+.claude
+.git
+test
+README.md
+render.yaml

@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Last Chamber</title>
+<meta name="theme-color" content="#0f0d0a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body data-felt="green" data-finish="steel">
+
+<svg width="0" height="0" aria-hidden="true">
+  <defs>
+    <linearGradient id="g-steel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#454b54"/><stop offset=".5" stop-color="#272b31"/><stop offset="1" stop-color="#15181c"/>
+    </linearGradient>
+    <linearGradient id="g-brass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c9a24b"/><stop offset=".5" stop-color="#8a6c2c"/><stop offset="1" stop-color="#5c471d"/>
+    </linearGradient>
+    <linearGradient id="g-wood" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5d3d27"/><stop offset="1" stop-color="#32200f"/>
+    </linearGradient>
+    <linearGradient id="g-nickel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d8d5cc"/><stop offset=".5" stop-color="#9a968c"/><stop offset="1" stop-color="#5f5c53"/>
+    </linearGradient>
+
+    <symbol id="sh-live" viewBox="0 0 12 26">
+      <rect x="2.5" y="9" width="7" height="15" rx="1.5" fill="#b08d3f"/>
+      <rect x="2.5" y="2" width="7" height="8.5" rx="2.6" fill="#b53a2e"/>
+    </symbol>
+    <symbol id="sh-blank" viewBox="0 0 12 26">
+      <rect x="2.5" y="9" width="7" height="15" rx="1.5" fill="#b08d3f"/>
+      <rect x="2.5" y="2" width="7" height="8.5" rx="2.6" fill="#d8cdb0"/>
+    </symbol>
+    <symbol id="sh-spent" viewBox="0 0 12 26">
+      <rect x="3" y="9.5" width="6" height="14" rx="1.5" fill="none" stroke="#4a4334" stroke-width="1.2"/>
+      <rect x="3" y="2.5" width="6" height="7.5" rx="2.4" fill="none" stroke="#4a4334" stroke-width="1.2"/>
+    </symbol>
+
+    <symbol id="i-peek" viewBox="0 0 24 24">
+      <path d="M2.5 12s3.8-6 9.5-6 9.5 6 9.5 6-3.8 6-9.5 6-9.5-6-9.5-6z"/>
+      <circle cx="12" cy="12" r="2.6"/>
+    </symbol>
+    <symbol id="i-eject" viewBox="0 0 24 24">
+      <rect x="9" y="11" width="6" height="10" rx="1.4"/>
+      <path d="M12 8V2.8M9.4 5.2L12 2.6l2.6 2.6"/>
+    </symbol>
+    <symbol id="i-spin" viewBox="0 0 24 24">
+      <path d="M20 12a8 8 0 1 1-2.4-5.7"/>
+      <path d="M20.2 2.8v4.4h-4.4"/>
+    </symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24">
+      <path d="M12 2.8l7 2.8v5.2c0 4.8-3.3 7.8-7 10-3.7-2.2-7-5.2-7-10V5.6z"/>
+    </symbol>
+    <symbol id="i-flask" viewBox="0 0 24 24">
+      <path d="M9.4 2.8h5.2M10.4 2.8v5.4l-4.6 8a3 3 0 0 0 2.6 4.6h7.2a3 3 0 0 0 2.6-4.6l-4.6-8V2.8"/>
+      <path d="M8 15.5h8"/>
+    </symbol>
+    <symbol id="i-double" viewBox="0 0 24 24">
+      <path d="M7 8.5c0-2 1-3.7 1.8-3.7S10.6 6.5 10.6 8.5V20H7z"/>
+      <path d="M13.4 8.5c0-2 1-3.7 1.8-3.7S17 6.5 17 8.5V20h-3.6z"/>
+    </symbol>
+    <symbol id="i-cuffs" viewBox="0 0 24 24">
+      <circle cx="7" cy="15.5" r="4.2"/>
+      <circle cx="17" cy="8.5" r="4.2"/>
+      <path d="M10.2 13l3.6-2.5"/>
+    </symbol>
+    <symbol id="i-cross" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="6.5"/>
+      <path d="M12 2.5v5M12 16.5v5M2.5 12h5M16.5 12h5"/>
+    </symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="3.2"/>
+      <path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1"/>
+    </symbol>
+  </defs>
+</svg>
+
+<div id="flash"></div>
+
+<!-- ============ menu ============ -->
+<section id="menu" class="screen">
+  <svg class="crest" viewBox="0 0 90 90">
+    <circle cx="45" cy="45" r="41" fill="none" stroke="#c9a24b" stroke-width="1.6"/>
+    <circle cx="45" cy="45" r="35" fill="none" stroke="#c9a24b" stroke-width=".7" opacity=".6"/>
+    <use href="#sh-live" x="30" y="27" width="10" height="22" transform="rotate(-18 35 45)"/>
+    <use href="#sh-blank" x="50" y="27" width="10" height="22" transform="rotate(18 55 45)"/>
+    <circle cx="45" cy="72" r="1.4" fill="#c9a24b"/>
+    <circle cx="45" cy="18" r="1.4" fill="#c9a24b"/>
+  </svg>
+  <h1 class="wordmark">Last Chamber</h1>
+  <p class="tag">A parlor game of nerve. The counts are public. The order is not.</p>
+  <div class="modes">
+    <button class="mode" id="mSolo">
+      <span class="mode-name">Solo</span>
+      <span class="mode-desc">One seat. The rest are house players.</span>
+    </button>
+    <button class="mode" id="mHot">
+      <span class="mode-name">Hot Seat</span>
+      <span class="mode-desc">One device, passed around the table.</span>
+    </button>
+    <button class="mode" id="mOnline">
+      <span class="mode-name">Online</span>
+      <span class="mode-desc">A private table with a join code.</span>
+    </button>
+  </div>
+  <div class="menu-links">
+    <button class="linkbtn" id="wardrobeBtn">Wardrobe</button>
+    <button class="linkbtn" id="settingsBtn">
+      <svg class="i"><use href="#i-gear"/></svg> Table settings
+    </button>
+  </div>
+</section>
+
+<!-- ============ lobby ============ -->
+<section id="lobby" class="screen hidden">
+  <p class="lobby-label">Table code</p>
+  <h1 class="lobby-code" id="lobbyCode">····</h1>
+  <p class="lobby-hint">Anyone with this code can join. Six seats, unlimited spectators.</p>
+  <div class="lobby-roster" id="lobbyRoster"></div>
+  <p class="lobby-spec" id="lobbySpec"></p>
+  <div class="lobby-row" id="lobbyBots">
+    <span>House players</span>
+    <button class="step" id="botMinus">&minus;</button>
+    <b id="botCount">2</b>
+    <button class="step" id="botPlus">+</button>
+  </div>
+  <div class="ruleblock lobby-rules hidden" id="lobbyRules"></div>
+  <div class="lobby-actions">
+    <button class="btn gold" id="lobbyStart">Deal</button>
+    <button class="btn" id="lobbyLeave">Leave</button>
+  </div>
+</section>
+
+<!-- ============ game ============ -->
+<section id="game" class="screen game hidden">
+  <header>
+    <div class="brand">
+      <svg class="crest sm" viewBox="0 0 90 90">
+        <circle cx="45" cy="45" r="41" fill="none" stroke="#c9a24b" stroke-width="2.4"/>
+        <use href="#sh-live" x="30" y="27" width="10" height="22" transform="rotate(-18 35 45)"/>
+        <use href="#sh-blank" x="50" y="27" width="10" height="22" transform="rotate(18 55 45)"/>
+      </svg>
+      <span class="brand-name">Last Chamber</span>
+    </div>
+    <div class="round-label" id="roundLabel">Round 1</div>
+    <div class="shellrow" id="shellRow"></div>
+  </header>
+
+  <div class="game-body">
+    <div id="table">
+      <div id="felt"></div>
+      <div id="gunLayer"></div>
+      <div id="seats"></div>
+      <div id="fxLayer"></div>
+      <div id="centerMsg"></div>
+    </div>
+
+    <aside id="rail">
+      <h2>The Ledger</h2>
+      <div id="ledger"></div>
+      <form id="chatForm" class="hidden" autocomplete="off">
+        <input id="chatIn" maxlength="120" placeholder="Table talk" spellcheck="false">
+      </form>
+    </aside>
+  </div>
+
+  <footer id="actionbar">
+    <div id="prompt">&nbsp;</div>
+    <div id="hand"></div>
+  </footer>
+</section>
+
+<!-- ============ overlays ============ -->
+<div class="overlay hidden" id="soloCfg">
+  <div class="card">
+    <h2>Solo Table</h2>
+    <label>Your name</label>
+    <input type="text" id="soloName" maxlength="12" value="You" spellcheck="false">
+    <label>House players</label>
+    <div class="seg" id="soloBots">
+      <button data-n="2">2</button><button data-n="3" class="sel">3</button>
+      <button data-n="4">4</button><button data-n="5">5</button>
+    </div>
+    <div class="ruleblock" id="soloRules"></div>
+    <button class="btn gold wide" id="soloGo">Deal</button>
+    <button class="linkbtn" data-close>Back</button>
+  </div>
+</div>
+
+<div class="overlay hidden" id="hotCfg">
+  <div class="card">
+    <h2>Hot Seat</h2>
+    <label>Players at the device</label>
+    <div class="seg" id="hotCount">
+      <button data-n="2" class="sel">2</button><button data-n="3">3</button><button data-n="4">4</button>
+    </div>
+    <div id="hotNames"></div>
+    <label>House players</label>
+    <div class="seg" id="hotBots">
+      <button data-n="0" class="sel">0</button><button data-n="1">1</button><button data-n="2">2</button>
+    </div>
+    <div class="ruleblock" id="hotRules"></div>
+    <button class="btn gold wide" id="hotGo">Deal</button>
+    <button class="linkbtn" data-close>Back</button>
+  </div>
+</div>
+
+<div class="overlay hidden" id="onlineCfg">
+  <div class="card">
+    <h2>Online Table</h2>
+    <label>Your name</label>
+    <input type="text" id="netName" maxlength="12" value="" placeholder="Name" spellcheck="false">
+    <button class="btn gold wide" id="netCreate">Open a table</button>
+    <div class="rule"><span>or join one</span></div>
+    <label>Table code</label>
+    <input type="text" id="netCode" maxlength="4" placeholder="ABCD" spellcheck="false" class="codein">
+    <label class="check"><input type="checkbox" id="netSpec"> Join as spectator</label>
+    <button class="btn wide" id="netJoin">Join</button>
+    <p class="err" id="netErr"></p>
+    <button class="linkbtn" data-close>Back</button>
+  </div>
+</div>
+
+<div class="overlay hidden" id="passModal">
+  <div class="card">
+    <h2>Pass the gun</h2>
+    <p class="big" id="passName"></p>
+    <p class="sub">Hand the device over. Their cards stay face down until they take it.</p>
+    <button class="btn gold wide" id="passOk">I have it</button>
+  </div>
+</div>
+
+<div class="overlay hidden" id="peekModal">
+  <div class="card">
+    <h2>Next shell</h2>
+    <div id="peekResult" class="peek-result">&nbsp;</div>
+    <button class="btn wide hidden" id="peekHold">Hold to view</button>
+    <p class="sub">Only you saw this.</p>
+    <button class="btn gold wide" id="peekOk">Done</button>
+  </div>
+</div>
+
+<div class="overlay hidden" id="overModal">
+  <div class="card">
+    <h2 id="overTitle">Survivor</h2>
+    <p class="sub" id="overSub"></p>
+    <button class="btn gold wide" id="againBtn">Deal again</button>
+    <button class="btn wide" id="overMenu">Leave the table</button>
+  </div>
+</div>
+
+<div class="overlay hidden" id="lookModal">
+  <div class="card wardrobe">
+    <h2>Wardrobe</h2>
+    <div class="fit-row">
+      <div class="fit-preview" id="fitPreview"></div>
+      <div class="fit-gun" id="fitGun"></div>
+    </div>
+    <label>Visor</label>         <div class="seg swatches" id="fitSkin"></div>
+    <label>Suit trim</label>     <div class="seg" id="fitOutfit"></div>
+    <label>Suit color</label>    <div class="seg swatches" id="fitColor"></div>
+    <label>Helmet kit</label>    <div class="seg" id="fitHat"></div>
+    <label>Revolver</label>      <div class="seg" id="fitGunSeg"></div>
+    <label>Finish</label>        <div class="seg" id="fitFinish"></div>
+    <button class="btn gold wide" data-close>Done</button>
+  </div>
+</div>
+
+<div class="overlay hidden" id="settingsModal">
+  <div class="card">
+    <h2>Table Settings</h2>
+    <label>Felt</label>
+    <div class="seg" id="feltSeg">
+      <button data-v="green">Green</button>
+      <button data-v="oxblood">Oxblood</button>
+      <button data-v="midnight">Midnight</button>
+    </div>
+    <label class="check"><input type="checkbox" id="streamerChk"> Streamer mode: peeks need a hold to reveal</label>
+    <p class="sub" id="playedLine"></p>
+    <button class="btn gold wide" data-close>Done</button>
+  </div>
+</div>
+
+<script type="module" src="/js/app.mjs"></script>
+</body>
+</html>
