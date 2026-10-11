@@ -443,7 +443,8 @@ export async function createBooth(host, opts = {}) {
   /* ---------------- targets ---------------- */
   let targets = [];             /* { pid, group, hinge, mesh, mat, canvas, tex, ang, rest, dents, alive, look } */
   const tgtProto = Object.fromEntries(FIG_IDS.map(id => [id, part("TGT_" + id)]));
-  const shieldGeo = new THREE.BoxGeometry(.5, .5, .015);
+  const shieldGeo = new THREE.BoxGeometry(.42, .34, .015);
+  const shieldMat = new THREE.MeshStandardMaterial({ color: 0x5e5a50, roughness: .5, metalness: .9 });
   function makeTarget(p, cap) {
     const look = p.look ? cleanLook(p.look) : seededLook(p.name);
     const mesh = tgtProto[FIG_IDS[look.fig]].clone();
@@ -464,8 +465,8 @@ export async function createBooth(host, opts = {}) {
     const group = new THREE.Group();
     group.add(hinge);
     /* the shield: a riveted tin plate that swings up in front */
-    const shield = new THREE.Mesh(shieldGeo, M.tin);
-    shield.position.set(0, .38, .09); shield.visible = false; shield.castShadow = true;
+    const shield = new THREE.Mesh(shieldGeo, shieldMat);
+    shield.position.set(0, .3, .09); shield.visible = false; shield.castShadow = true;
     group.add(shield);
     Object.assign(t, { group, hinge, mesh, mat: paintMat, map, shield, shieldUp: { x: 0, v: 0 },
       ang: { x: p.alive ? 0 : -1.5, v: 0 }, rest: p.alive ? 0 : -1.5, wob: 0 });
@@ -483,6 +484,8 @@ export async function createBooth(host, opts = {}) {
       const x = n === 1 ? 0 : -span / 2 + span * i / (n - 1);
       t.x = x; t.sc = sc;
       t.mesh.scale.setScalar(sc);
+      t.shield.scale.setScalar(sc / TGT_SCALE);
+      t.shield.position.y = .3 * sc / TGT_SCALE;
       t.group.position.set(x, RAIL_Y - .02, RAIL_Z + .07);
     });
   }
@@ -525,7 +528,7 @@ export async function createBooth(host, opts = {}) {
   /* ---------------- camera rig ---------------- */
   const camBase = { pos: new THREE.Vector3(), look: new THREE.Vector3() };
   const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
-  let camFocus = null, camPush = { x: 0, v: 0 }, shake = 0, mode = opts.mode || "attract";
+  let camFocus = null, camK = { pos: .55, look: .7 }, camPush = { x: 0, v: 0 }, shake = 0, mode = opts.mode || "attract";
   let insetR = 0, insetB = 0;
   function frameCamera() {
     const w = host.clientWidth || 1, h = host.clientHeight || 1;
@@ -625,6 +628,14 @@ export async function createBooth(host, opts = {}) {
 
     /* gun carriage along the track, yaw and pitch on the swivel */
     spring(carX, carTarget, 26, 9, dt);
+    if (sweeping && !previewT && !pulling) {
+      const live = targets.filter(t => t.alive);
+      if (live.length) {
+        const xs = live.map(t => t.x), lo = Math.min(...xs), hi = Math.max(...xs);
+        const s = rm ? .5 : (Math.sin(t0 * .9) + 1) / 2;
+        aimPoint(lo + (hi - lo) * s);
+      }
+    }
     spring(aimYaw, yawTarget, 40, 11, dt);
     spring(aimPitch, pitchTarget, 40, 11, dt);
     spring(kick, 0, 160, 14, dt);
@@ -748,10 +759,9 @@ export async function createBooth(host, opts = {}) {
     tmpV.copy(camBase.pos);
     tmpV2.copy(camBase.look);
     if (camFocus && push > 0) {
-      /* phones push in gently so the whole rail stays in frame */
-      const narrow = camera.aspect < 1.1;
-      tmpV.lerp(new THREE.Vector3(camFocus.x * .45, RAIL_Y + .75, 1.6), push * (narrow ? .14 : .55));
-      tmpV2.lerp(camFocus, push * (narrow ? .25 : .7));
+      /* director beats: travel toward the focus, keeping the same height relation to it */
+      tmpV.lerp(new THREE.Vector3(camFocus.x * .45, camFocus.y + .3, camFocus.z + 3.75), push * camK.pos);
+      tmpV2.lerp(camFocus, push * camK.look);
     }
     if (!rm) { tmpV.x += Math.sin(t0 * .4) * .02; tmpV.y += Math.sin(t0 * .53) * .012; }
     if (shake > 0 && !rm) {
@@ -770,6 +780,9 @@ export async function createBooth(host, opts = {}) {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const vec = (x, y, z) => new THREE.Vector3(x, y, z);
   function targetCentre(t) { return vec(t.x, RAIL_Y + .45, RAIL_Z + .07); }
+  let sweeping = false, previewT = null;
+  const beatK = () => camera.aspect < 1.1 ? { pos: .4, look: .55 } : { pos: .55, look: .7 };
+  function aimPoint(x) { aimAt({ x }); }
   function aimAt(t) {
     const from = vec(carX.x, COUNTER_Y + .3, TRACK_Z);
     const to = targetCentre(t);
@@ -833,20 +846,41 @@ export async function createBooth(host, opts = {}) {
       if (animate) await sleep(reduced() ? 120 : 520);
     },
     setBulbs(m) { bulbMode = m; },
+    /* your turn: the gun hunts across the live targets until you take hold of one */
+    sweep(on) { sweeping = !!on; if (!on && !previewT && !pulling) restGun(); },
+    preview(tid) {
+      const t = tgt(tid); if (!t) return;
+      previewT = t; aimAt(t); cockTarget = -.85; bulbMode = "dim";
+    },
+    unpreview() {
+      previewT = null; cockTarget = 0;
+      if (!pulling) { bulbMode = sweeping ? "chase" : "steady"; if (!sweeping) restGun(); }
+    },
+    /* a director beat: the camera leans in on a seat (or the shell rack) for a moment */
+    async beat(on, ms = 700) {
+      if (reduced()) return sleep(Math.min(ms, 250));
+      if (on === "rack") camFocus = rackBox.getCenter(new THREE.Vector3()).add(vec(0, .25, -.4));
+      else { const t = tgt(on); if (!t) return; camFocus = targetCentre(t); }
+      camK = beatK();
+      await sleep(ms);
+      if (!pulling) camFocus = null;
+    },
     round(round, live, blank) {
       setRack(live, blank, true);
       setTally(round, live, blank);
     },
     counts(round, live, blank) { setRack(live, blank, false); setTally(round, live, blank); },
-    async aim(pid, tid) {
+    async aim(pid, tid, ms) {
       const t = tgt(tid);
       if (!t) return;
       pulling = true;
+      previewT = null;
       cockTarget = -.85;
       aimAt(t);
+      camK = beatK();
       camFocus = targetCentre(t);
       bulbMode = "dim";
-      await sleep(reduced() ? 300 : 1250);
+      await sleep(ms ?? (reduced() ? 300 : 1250));
     },
     async fire({ tid, live, shielded, killed }) {
       const t = tgt(tid);

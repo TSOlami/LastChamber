@@ -68,6 +68,7 @@
       <p class="err" id="quickErr" role="alert"></p>
     </form>
     <nav class="board-links" aria-label="More">
+      <button class="linkbtn" id="rulesBtn">How it plays</button>
       <button class="linkbtn" id="paintBtn">Paint shop</button>
       <button class="linkbtn" id="officeBtn">Back office</button>
     </nav>
@@ -123,6 +124,7 @@
     <div class="stub" id="stub">
       <p class="stub-prompt" id="prompt">&nbsp;</p>
       <p class="stub-hint" id="hint"></p>
+      <p class="stub-count" id="counts" aria-live="off"></p>
     </div>
     <div class="hand" id="hand" aria-label="Your items"></div>
   </div>
@@ -249,6 +251,7 @@
       <button class="icon-btn" value="cancel" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
     </header>
     <div class="actions stack">
+      <button class="btn" value="rules" id="tmRules">How it plays</button>
       <button class="btn" value="office" id="tmOffice">Back office</button>
       <button class="btn" value="leave" id="tmLeave">Leave the table</button>
       <button class="btn gold" value="cancel">Keep playing</button>
@@ -263,6 +266,49 @@
     <canvas class="qr" id="codeQr" width="232" height="232" aria-label="QR code for the invite link"></canvas>
     <p class="codecard-url" id="codeUrl"></p>
     <button class="btn" id="codeClose">Close</button>
+  </div>
+</dialog>
+
+<!-- first-turn coach mark: shown once, leaves when you pull -->
+<div class="coach hidden" id="coach">
+  <div class="coach-spot" id="coachSpot"></div>
+  <svg class="coach-hand" id="coachHand" viewBox="0 0 64 64" aria-hidden="true">
+    <circle class="ripple" cx="26" cy="8" r="12" fill="none" stroke="currentColor" stroke-width="2.5"/>
+    <path d="M22 30V10a4 4 0 0 1 8 0v16l2-1a4 4 0 0 1 5 2l1 1a4 4 0 0 1 5 1l1 1a4 4 0 0 1 6 3v13c0 8-6 14-14 14h-3c-5 0-9-2-12-6L12 41a4 4 0 0 1 6-5z" fill="#f2dfb4" stroke="#14100d" stroke-width="2.5" stroke-linejoin="round"/>
+  </svg>
+  <div class="coach-card" id="coachCard" role="dialog" aria-labelledby="coachTitle">
+    <h2 id="coachTitle">Hold a target to aim</h2>
+    <p>Keep holding until the ring fills, then let go to pull the trigger. Slide off to back out.</p>
+    <p class="sub">Aim at yourself and hit a blank: the gun stays in your hand for another go.</p>
+    <button class="linkbtn" id="coachSkip">I've got it</button>
+  </div>
+</div>
+
+<dialog class="sheet" id="rulesDlg" aria-labelledby="rulesTitle">
+  <form method="dialog" class="sheet-body">
+    <header class="sheet-head">
+      <h2 id="rulesTitle">How it plays</h2>
+      <button class="icon-btn" value="cancel" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
+    </header>
+    <ol class="rules-list">
+      <li><b>The counts are public</b>Each round the barker loads live and blank shells. Everyone sees how many of each. Nobody sees the order.</li>
+      <li><b>Hold a target, let go to pull</b>A live shell knocks that target down and costs it a life. A blank does nothing.</li>
+      <li><b>Pull on yourself to gamble</b>Hit a blank on yourself and you keep the gun for another go. Hit a live one and it costs you.</li>
+      <li><b>Items are optional tricks</b>Tap an item to read what it does, tap it again to use it. The last target standing takes the prize.</li>
+    </ol>
+    <div class="actions"><button class="btn gold" value="done" id="rulesGo">Got it</button></div>
+  </form>
+</dialog>
+
+<dialog class="slip" id="outDlg" aria-labelledby="outTitle">
+  <div class="slip-body">
+    <h2 id="outTitle">You're out</h2>
+    <p class="sub">Your target stays down for the rest of the night. The rail plays on without you.</p>
+    <div class="actions stack">
+      <button class="btn gold" id="outWatch">Watch the rest</button>
+      <button class="btn" id="outFast">Fast-forward to the end</button>
+      <button class="btn" id="outAgain">Deal again</button>
+    </div>
   </div>
 </dialog>
 

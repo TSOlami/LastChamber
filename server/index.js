@@ -14,7 +14,7 @@ import { carnivalName, LOOK_RANGES } from "../public/js/world.mjs";
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PUBLIC = path.join(ROOT, "public");
 const PORT = process.env.PORT || 4173;
-const BOT_DELAY = 1500;
+const BOT_DELAY = 2200;
 
 const MIME = {
   ".html": "text/html; charset=utf-8",

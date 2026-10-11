@@ -256,12 +256,110 @@ function buildHits() {
     b.className = "tbtn";
     b.id = "hit" + p.id;
     b.tabIndex = -1;
-    b.innerHTML = `<span class="aim"><svg class="i"><use href="#i-sight"/></svg><span class="aim-t"></span></span><span class="ttag"></span>`;
-    b.addEventListener("click", () => humanShoot(p.id));
+    b.innerHTML = `<span class="youmark" aria-hidden="true">You</span><span class="aim"><svg class="i"><use href="#i-sight"/></svg><span class="charge" aria-hidden="true"></span><span class="aim-t"></span></span><span class="ttag"></span>`;
+    wireTarget(b, p.id);
     layer.appendChild(b);
   }
   renderTags();
 }
+/* ---------------- hold to aim, let go to pull ----------------
+   A press swings the gun onto the target and cocks it; holding until the ring
+   fills arms it; letting go pulls. Sliding off backs out. Keyboard: hold Enter or
+   Space. Assistive tech that sends a plain click aims first, then pulls. */
+const HOLD_MS = 320;
+let aimS = null, pressing = false;
+const idleAimText = pid => `Hold to aim at ${isYou(pid) ? "yourself" : ui.pub?.players.find(q => q.id === pid)?.name}`;
+/* arming is measured from the input events' own timestamps, so a busy page can't turn a tap into a pull */
+function startAim(tid, el, at = performance.now()) {
+  if (!ui.canAct || aimS?.tid === tid) return;
+  endAim();
+  if (ui.selItem != null) { ui.selItem = null; renderHand(); }
+  aimS = { tid, el, armed: false, t0: at };
+  el.style.setProperty("--hold", HOLD_MS + "ms");
+  el.classList.add("aiming");
+  el.querySelector(".aim-t").textContent = `Aiming at ${isYou(tid) ? "yourself" : ui.pub.players.find(q => q.id === tid)?.name}`;
+  stage.preview(tid);
+  sCock();
+  aimS.timer = setTimeout(() => {
+    if (!aimS || aimS.tid !== tid) return;
+    aimS.armed = true;
+    el.classList.add("armed");
+    el.querySelector(".aim-t").textContent = "Let go to pull";
+  }, HOLD_MS);
+}
+function endAim() {
+  if (!aimS) return;
+  clearTimeout(aimS.timer);
+  aimS.el.classList.remove("aiming", "armed");
+  aimS.el.querySelector(".aim-t").textContent = idleAimText(aimS.tid);
+  aimS = null;
+}
+function releaseAim(at = performance.now()) {
+  if (!aimS) return;
+  const { tid, t0 } = aimS;
+  endAim();
+  if (at - t0 >= HOLD_MS) humanShoot(tid);
+  else { stage.unpreview(); $("#hint").textContent = "Keep holding until the ring fills, then let go."; }
+}
+function cancelAim() { if (!aimS) return; endAim(); stage.unpreview(); }
+function wireTarget(b, pid) {
+  b.addEventListener("pointerdown", e => {
+    if (e.button > 0 || !ui.canAct || !b.classList.contains("targetable")) return;
+    e.preventDefault();
+    try { b.releasePointerCapture(e.pointerId); } catch {}
+    pressing = true;
+    startAim(pid, b, e.timeStamp);
+  });
+  /* sliding the finger along the rail re-aims */
+  b.addEventListener("pointerenter", e => { if (pressing && b.classList.contains("targetable")) startAim(pid, b, e.timeStamp); });
+  b.addEventListener("pointerleave", () => { if (aimS?.el === b) cancelAim(); });
+  b.addEventListener("pointerup", e => { if (aimS?.el === b) releaseAim(e.timeStamp); });
+  b.addEventListener("keydown", e => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (!e.repeat) startAim(pid, b, e.timeStamp); }
+    else if (e.key === "Escape" && aimS) { e.preventDefault(); cancelAim(); }
+  });
+  b.addEventListener("keyup", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); releaseAim(e.timeStamp); } });
+  b.addEventListener("click", e => {
+    if (e.detail !== 0 || !ui.canAct) return;
+    if (ui.a11yAim === pid) { ui.a11yAim = null; humanShoot(pid); return; }
+    ui.a11yAim = pid;
+    stage.preview(pid);
+    announce(`Aimed at ${isYou(pid) ? "yourself" : ui.pub.players.find(q => q.id === pid)?.name}. Activate again to pull, or press Escape to back out.`);
+  });
+  b.addEventListener("contextmenu", e => e.preventDefault());
+}
+addEventListener("pointerup", () => { pressing = false; cancelAim(); });
+addEventListener("pointercancel", () => { pressing = false; cancelAim(); });
+
+/* ---------------- first-turn coach mark ---------------- */
+let coachOn = false;
+function maybeCoach() {
+  if (coachOn || ls.get("taught", false) || ui.spectating) return;
+  coachOn = true;
+  $("#coach").classList.remove("hidden");
+  placeCoach();
+}
+function endCoach(learned) {
+  if (!coachOn) return;
+  coachOn = false;
+  $("#coach").classList.add("hidden");
+  if (learned) ls.set("taught", true);
+}
+function placeCoach() {
+  const els = $$(".tbtn.targetable");
+  if (!els.length) return;
+  const rs = els.map(e => e.getBoundingClientRect());
+  const x0 = Math.min(...rs.map(q => q.left)) - 14, x1 = Math.max(...rs.map(q => q.right)) + 14;
+  const y0 = Math.min(...rs.map(q => q.top)) - 44, y1 = Math.max(...rs.map(q => q.bottom)) + 36;
+  Object.assign($("#coachSpot").style, { left: x0 + "px", top: y0 + "px", width: (x1 - x0) + "px", height: (y1 - y0) + "px" });
+  const opp = els.find(e => !e.classList.contains("is-you")) || els[0];
+  const o = opp.getBoundingClientRect();
+  Object.assign($("#coachHand").style, { left: (o.left + o.width / 2) + "px", top: (o.top + o.height * .42) + "px" });
+  const card = $("#coachCard"), ch = card.offsetHeight;
+  card.style.top = (y1 + 14 + ch < innerHeight - 12 ? y1 + 14 : Math.max(12, y0 - ch - 14)) + "px";
+}
+$("#coachSkip").onclick = () => endCoach(true);
+
 function placeHits() {
   if (!ui.pub || !stage) return;
   for (const p of ui.pub.players) {
@@ -274,7 +372,11 @@ function placeHits() {
     el.dataset.box = key;
     const [x, y, w, h] = key.split(",");
     el.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
+    const mid = +x + w / 2;
+    el.classList.toggle("edge-r", mid > innerWidth - 100);
+    el.classList.toggle("edge-l", mid < 100);
   }
+  if (coachOn) placeCoach();
 }
 function renderTags() {
   if (!ui.pub) return;
@@ -282,13 +384,14 @@ function renderTags() {
     const el = document.getElementById("hit" + p.id);
     if (!el) continue;
     const tag = el.querySelector(".ttag");
+    el.classList.toggle("is-you", isYou(p.id) && p.alive);
     const icons = [];
     if (!p.alive) icons.push(`<span class="out">Out</span>`);
     if (p.shield) icons.push(`<svg class="i state" aria-hidden="true"><use href="#i-shield"/></svg>`);
     if (p.cuffed) icons.push(`<svg class="i state" aria-hidden="true"><use href="#i-cuffs"/></svg>`);
     if (!isYou(p.id)) {
       /* a crowded phone rail gets one ticket with the count; the button's label lists them */
-      if (innerWidth < 761 && ui.pub.players.length > 4) {
+      if (innerWidth < 761 && ui.pub.players.length > 3) {
         if (p.items.length) icons.push(`<span class="tcount" aria-hidden="true"><svg class="i"><use href="#i-tape"/></svg>${p.items.length}</span>`);
       } else p.items.forEach(k => icons.push(`<svg class="i" aria-hidden="true"><use href="#${ICON[k]}"/></svg>`));
     }
@@ -310,8 +413,8 @@ function setTargets(on) {
     el.classList.toggle("targetable", live);
     el.tabIndex = live ? 0 : -1;
     el.disabled = !live;
-    el.querySelector(".aim-t").textContent = isYou(p.id) ? "Pull on yourself" : `Pull on ${p.name}`;
-    if (live) el.setAttribute("aria-label", isYou(p.id) ? "Pull on yourself" : `Pull on ${p.name}, ${p.lives} lives`);
+    el.querySelector(".aim-t").textContent = idleAimText(p.id);
+    if (live) el.setAttribute("aria-label", isYou(p.id) ? "Aim at yourself" : `Aim at ${p.name}, ${p.lives} lives`);
   }
   if (!on) renderTags();
 }
@@ -322,8 +425,13 @@ function renderState() {
   if (!pub || !stage) return;
   stage.update(pub);
   stage.counts(pub.round, pub.live, pub.blank);
+  syncCounts();
   renderTags();
   renderHand();
+}
+function syncCounts() {
+  const pub = ui.pub;
+  $("#counts").innerHTML = pub?.round ? `<span class="live">${pub.live} live</span> · ${pub.blank} blank left` : "";
 }
 function renderHand() {
   const wrap = $("#hand");
@@ -337,9 +445,23 @@ function renderHand() {
     b.setAttribute("aria-label", `${E.ITEMS[k].name}: ${E.ITEMS[k].desc}`);
     b.innerHTML = `<svg class="i" aria-hidden="true"><use href="#${ICON[k]}"/></svg>${E.ITEMS[k].name}`;
     b.disabled = !ui.canAct;
-    b.addEventListener("click", () => humanItem(idx));
+    b.classList.toggle("selected", ui.selItem === idx);
+    b.setAttribute("aria-pressed", ui.selItem === idx);
+    b.addEventListener("click", () => itemTap(idx));
     wrap.appendChild(b);
   });
+}
+const TURN_HINT = "A blank on yourself keeps the gun in your hand.";
+function itemTap(idx) {
+  if (!ui.canAct) return;
+  if (ui.selItem === idx) { ui.selItem = null; humanItem(idx); return; }
+  cancelAim();
+  ui.selItem = idx;
+  renderHand();
+  const k = ui.pub.players.find(p => p.id === ui.you)?.items[idx];
+  if (!k) return;
+  $("#hint").textContent = `${E.ITEMS[k].name}: ${E.ITEMS[k].desc}. Tap it again to use it.`;
+  announce(`${E.ITEMS[k].name}: ${E.ITEMS[k].desc}. Activate again to use it.`);
 }
 function setPrompt(html, hint = "") {
   $("#prompt").innerHTML = html || "&nbsp;";
@@ -389,8 +511,8 @@ async function animate(ev) {
       log(`Round ${ev.round}. The barker racks <b>${ev.live} live</b> and <b>${ev.blank} blank</b>, then spins the cylinder.`, "sys");
       sSpin();
       stage.round(ev.round, ev.live, ev.blank);
-      renderTags(); renderHand();
-      await delay(reduced() ? 400 : 1100);
+      syncCounts(); renderTags(); renderHand();
+      await (ui.fast ? delay(200) : stage.beat("rack", reduced() ? 400 : 1100));
       break;
     }
     case "turn": {
@@ -403,6 +525,8 @@ async function animate(ev) {
         ui.gunAt = ev.pid;
         await stage.giveGun(ev.pid, lookOf(p), true);
       }
+      /* a beat on whoever holds the gun, unless it's you and the controls are about to arrive */
+      if (!isYou(ev.pid) && !ui.fast) await stage.beat(ev.pid, 650);
       if (ui.reel) ui.reel.holder = ev.pid;
       break;
     }
@@ -421,12 +545,13 @@ async function animate(ev) {
       const before = snapPlayers(pub);
       const self = ev.pid === ev.tid;
       const aimLine = self
-        ? `<b>${N(ev.pid)}</b> ${V(ev.pid, "turns", "turn")} the gun inward.`
-        : `<b>${N(ev.pid)}</b> ${V(ev.pid, "draws", "draw")} on <b>${No(ev.tid)}</b>.`;
+        ? `<b>${N(ev.pid)}</b> ${V(ev.pid, "pulls", "pull")} on ${V(ev.pid, "themself", "yourself")}.`
+        : `<b>${N(ev.pid)}</b> ${V(ev.pid, "pulls", "pull")} on <b>${No(ev.tid)}</b>.`;
       setPrompt(aimLine, "");
       log(aimLine);
       sCock(); sHeart();
-      await stage.aim(ev.pid, ev.tid);
+      /* you already aimed with the hold; everyone else gets the full swing */
+      await stage.aim(ev.pid, ev.tid, ui.fast ? 250 : isYou(ev.pid) ? 600 : undefined);
       const firing = stage.fire(ev);
       if (ev.live) {
         pub.live = Math.max(0, pub.live - 1);
@@ -440,6 +565,7 @@ async function animate(ev) {
           log(`<b>Live.</b> ${N(t.id)} ${V(t.id, "goes", "go")} down and ${V(t.id, "loses", "lose")} ${ev.dmg === 2 ? "two lives" : "a life"}.`, "hit");
           if (ev.killed) {
             t.alive = false;
+            if (isYou(t.id) && ui.mode !== "hot" && !ui.spectating) ui.outPending = true;
             setTimeout(sThud, 380);
             log(`<b>${N(t.id)}</b> ${V(t.id, "stays", "stay")} down. Out for the night.`, "hit");
           }
@@ -454,9 +580,12 @@ async function animate(ev) {
       }
       stage.update(pub);
       stage.counts(pub.round, pub.live, pub.blank);
+      syncCounts();
       renderTags();
       if (ui.reel) ui.reel.moments.push({ ev, round: pub.round, before, after: snapPlayers(pub) });
       await firing;
+      /* a knockout gets its own beat */
+      if (ev.killed && !ui.fast) await stage.beat(ev.tid, 900);
       break;
     }
     case "end": await delay(300); break;
@@ -534,7 +663,12 @@ function afterQueue() {
   if (!pub) return;
   renderState();
 
-  if (pub.over) { gameOver(); return; }
+  if (pub.over) { ui.outPending = false; gameOver(); return; }
+  if (ui.outPending) {
+    ui.outPending = false;
+    $("#outAgain").textContent = ui.mode === "online" ? "Leave the table" : "Deal again";
+    $("#outDlg").showModal();
+  }
   const cur = pub.players.find(p => p.id === pub.turn);
   if (!cur) return;
 
@@ -546,7 +680,7 @@ function afterQueue() {
   if (cur.bot) {
     waitPrompt(cur);
     clearTimeout(ui.botTimer);
-    ui.botTimer = setTimeout(botStep, 900 + rnd(700));
+    ui.botTimer = setTimeout(botStep, ui.fast ? 200 : 1500 + rnd(900));
   } else if (ui.mode === "hot" && cur.id !== ui.you) {
     setPrompt("&nbsp;");
     setTargets(false);
@@ -566,25 +700,37 @@ function afterQueue() {
 }
 function enableInput() {
   ui.canAct = true;
+  ui.selItem = null; ui.a11yAim = null;
   const me = ui.pub.players.find(p => p.id === ui.you);
-  setPrompt(`<b>Your turn${ui.mode === "hot" && me ? ", " + esc(me.name) : ""}.</b> Pick a target.`,
-    me?.items.length ? "Play an item first if you like. Pulling on yourself keeps the gun on a blank." : "Pulling on yourself keeps the gun on a blank.");
+  setPrompt(`<b>Your turn${ui.mode === "hot" && me ? ", " + esc(me.name) : ""}.</b> Hold a target, let go to pull.`, TURN_HINT);
   $("#stub").classList.remove("yours"); void $("#stub").offsetWidth; $("#stub").classList.add("yours");
   stage.setBulbs("chase");
+  stage.sweep(true);
   setTargets(true);
   renderHand();
+  announce(`Your turn. Hold a target to aim, let go to pull. ${ui.pub.live} live and ${ui.pub.blank} blank left.`);
+  maybeCoach();
   const first = $(".tbtn.targetable");
   if (first && document.activeElement === document.body) first.focus({ preventScroll: true });
 }
 function waitPrompt(cur) {
   ui.canAct = false;
+  cancelAim();
+  stage.sweep(false);
   stage.setBulbs("steady");
-  setPrompt(cur.bot ? `<b>${esc(cur.name)}</b> is sizing up the rail.` : `Waiting on <b>${esc(cur.name)}</b>.`,
+  setPrompt(cur.bot ? `<b>${esc(cur.name)}</b> is choosing a target.` : `Waiting on <b>${esc(cur.name)}</b>.`,
     ui.spectating ? "You're watching this table." : "");
   setTargets(false);
   renderHand();
 }
-function lockInput() { ui.canAct = false; stage.setBulbs("steady"); setTargets(false); renderHand(); }
+function lockInput() {
+  ui.canAct = false; ui.selItem = null; ui.a11yAim = null;
+  cancelAim();
+  stage.sweep(false);
+  stage.setBulbs("steady");
+  setTargets(false);
+  renderHand();
+}
 
 function botStep() {
   const st = ui.st;
@@ -596,6 +742,7 @@ function botStep() {
 }
 function humanShoot(tid) {
   if (!ui.canAct) return;
+  endCoach(true);
   lockInput();
   if (ui.mode === "online") ui.ws?.send(JSON.stringify({ t: "shoot", tid }));
   else enqueue(E.shoot(ui.st, ui.pub.turn, tid));
@@ -609,6 +756,20 @@ function humanItem(idx) {
   enqueue(ev);
 }
 
+$("#outWatch").onclick = () => $("#outDlg").close();
+$("#outFast").onclick = () => {
+  ui.fast = true;
+  $("#outDlg").close();
+  clearTimeout(ui.botTimer);
+  if (!ui.anim && ui.st && !ui.st.over && ui.st.players[ui.st.turn]?.bot) ui.botTimer = setTimeout(botStep, 200);
+};
+$("#outAgain").onclick = () => {
+  $("#outDlg").close();
+  if (ui.mode === "online") { leaveTable(); return; }
+  const defs = ui.st.players.map(p => ({ name: p.name, bot: p.bot, look: p.look }));
+  startLocal(defs, ui.humans, store.rules);
+};
+
 /* ---------------- starting a table ---------------- */
 const WORD = ["", "One", "Two", "Three", "Four", "Five"];
 const livesLine = (n, lives) => `${n} targets on the rail. ${WORD[lives] || lives} ${lives === 1 ? "life" : "lives"} each.`;
@@ -617,6 +778,7 @@ function enterTable(pub) {
   ui.pub = pub;
   ui.gunAt = null;
   ui.counted = false;
+  ui.fast = false; ui.outPending = false;
   $("#ledger").innerHTML = "";
   $("#tape").classList.remove("open");
   closeAll();
@@ -766,9 +928,17 @@ function openSetup(kind) {
   dlg.showModal();
   dlg.querySelector("input")?.focus();
 }
-$("#mSolo").onclick = () => openSetup("solo");
-$("#mHot").onclick = () => openSetup("hot");
-$("#mOnline").onclick = () => openSetup("online");
+function openRules(then) {
+  const d = $("#rulesDlg");
+  d.returnValue = "";
+  d.onclose = () => { ls.set("rulesSeen", true); then?.(); };
+  d.showModal();
+}
+const rulesFirst = fn => () => ls.get("rulesSeen", false) ? fn() : openRules(fn);
+$("#mSolo").onclick = rulesFirst(() => openSetup("solo"));
+$("#mHot").onclick = rulesFirst(() => openSetup("hot"));
+$("#mOnline").onclick = rulesFirst(() => openSetup("online"));
+$("#rulesBtn").onclick = () => openRules();
 
 /* ---------------- joining: code on the board, or a link ---------------- */
 const CODE_RE = /^[A-HJ-NP-Z2-9]{4}$/;
@@ -934,6 +1104,8 @@ function gameOver() {
   if (!ui.counted) { ui.counted = true; store.games++; sWin(); }
   const pub = ui.pub;
   const w = pub.players.find(p => p.id === pub.winner);
+  endCoach(false);
+  stage.sweep(false);
   stage.cheer(w?.id);
   setTargets(false);
   setPrompt(!w ? "Nobody's left standing." : isYou(w.id) ? "<b>You take the prize.</b>" : `<b>${esc(w.name)}</b> takes the prize.`);
@@ -991,7 +1163,7 @@ async function playReel(record) {
     stage.update({ players: m.before, rules: { lives: R.cap } });
     stage.setActive(m.ev.pid);
     await stage.giveGun(m.ev.pid, lookOf(R.start.find(p => p.id === m.ev.pid)), true);
-    cap.textContent = `Round ${m.round}: ${nm(m.ev.pid)} ${m.ev.pid === m.ev.tid ? "turns it inward" : "draws on " + nm(m.ev.tid)}`;
+    cap.textContent = `Round ${m.round}: ${nm(m.ev.pid)} ${m.ev.pid === m.ev.tid ? "pulls on themself" : "pulls on " + nm(m.ev.tid)}`;
     announce(cap.textContent);
     sCock(); sHeart();
     await stage.aim(m.ev.pid, m.ev.tid);
@@ -1082,6 +1254,7 @@ $("#tableMenu").addEventListener("close", () => {
   const v = $("#tableMenu").returnValue;
   if (v === "leave") leaveTable();
   else if (v === "office") openOffice();
+  else if (v === "rules") openRules();
 });
 
 /* ---------------- paint shop ---------------- */
@@ -1169,6 +1342,7 @@ $("#officeBtn").onclick = openOffice;
 
 /* keyboard: 1-7 play items, arrow keys move between targets */
 document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && ui.a11yAim != null) { ui.a11yAim = null; stage.unpreview(); announce("Backed out."); }
   if (!ui.canAct || e.target.closest("input, dialog[open]")) return;
   if (/^[1-7]$/.test(e.key)) { const b = $$("#hand .item")[+e.key - 1]; if (b) { e.preventDefault(); b.click(); } }
   if (e.key === "ArrowLeft" || e.key === "ArrowRight") {

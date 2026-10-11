@@ -87,7 +87,7 @@ export async function createBooth2D(host, opts = {}) {
 
   let targets = [], mode = opts.mode || "attract", bulbMode = "steady", activePid = null, afterRender = null, listeners = [];
   const carX = { x: .5, v: 0 }, aimR = { x: 0, v: 0 }, kick = { x: 0, v: 0 };
-  let carTarget = .5, aimTarget = 0;
+  let carTarget = .5, aimTarget = 0, sweeping = false, previewing = false;
   const railY = () => (window.innerWidth / window.innerHeight < .8 ? .6 : .62) * root.clientHeight;
   function layout() {
     const W = root.clientWidth, n = targets.length;
@@ -139,6 +139,7 @@ export async function createBooth2D(host, opts = {}) {
     const at = tgt(activePid);
     key.style.opacity = at ? 1 : 0;
     if (at) { key.style.left = at.xf * 100 + "%"; key.style.top = railY() * .55 + "px"; }
+    if (sweeping && !previewing && !rm) aimTarget = Math.sin(t0 * .9) * 35;
     spring(carX, carTarget, 26, 9, dt); spring(aimR, aimTarget, 40, 11, dt); spring(kick, 0, 160, 14, dt);
     gun.style.left = `calc(${carX.x * 100}% - 40px)`;
     gun.style.transform = `rotate(${-90 + aimR.x - kick.x * 20}deg)`;
@@ -189,13 +190,17 @@ export async function createBooth2D(host, opts = {}) {
       if (animate) await sleep(reduced() ? 120 : 520);
     },
     setBulbs(m) { bulbMode = m; },
+    sweep(on) { sweeping = !!on; if (!on) aimTarget = 0; },
+    preview(tid) { const t = tgt(tid); if (!t) return; previewing = true; aimTarget = (t.xf - carX.x) * 120; bulbMode = "dim"; },
+    unpreview() { previewing = false; aimTarget = 0; bulbMode = sweeping ? "chase" : "steady"; },
+    async beat(on, ms = 700) { await sleep(reduced() ? Math.min(ms, 250) : ms); },
     round(r, live, blank) { setRack(live, blank); [r, live, blank].forEach((v, i) => flipTo(i, v)); },
     counts(r, live, blank) { if (rack.childElementCount !== live + blank) setRack(live, blank); [r, live, blank].forEach((v, i) => flipTo(i, v)); },
-    async aim(pid, tid) {
+    async aim(pid, tid, ms) {
       const t = tgt(tid); if (!t) return;
       aimTarget = (t.xf - carX.x) * 120;
       bulbMode = "dim";
-      await sleep(reduced() ? 300 : 1250);
+      await sleep(ms ?? (reduced() ? 300 : 1250));
     },
     async fire({ tid, live, shielded, killed }) {
       const t = tgt(tid);
