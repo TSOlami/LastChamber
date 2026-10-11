@@ -1,184 +1,85 @@
 /* Last Chamber client.
-   Three drivers share one renderer and event animator:
-   solo and hot seat run the engine locally, online plays against the server. */
+   Three drivers share one booth and one event animator:
+   solo and hot seat run the engine locally, online plays against the server.
+   The booth (3D, or the 2.5D fallback) shows the table; this file runs the
+   game flow, the paper UI around it, sound, and the replay reel. */
 
 import * as E from "/shared/engine.mjs";
+import * as W from "./world.mjs";
+import qrcode from "/vendor/qrcode.mjs";
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const delay = ms => new Promise(r => setTimeout(r, ms));
 const rnd = n => Math.floor(Math.random() * n);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 const ICON = { peek: "i-peek", eject: "i-eject", spin: "i-spin", shield: "i-shield",
                flask: "i-flask", double: "i-double", cuffs: "i-cuffs" };
 
-/* ---------------- appearance system ----------------
-   Original suit cast. look keys keep their wire names for compatibility:
-   skin = visor tint, outfit = suit trim, color = suit color, hat = helmet kit. */
-const SKINS = ["#8fd4e8", "#ffd58f", "#a9e8b4", "#e8a9c8", "#c9c4f2"];
-const COLORS = ["#8a3a30", "#31597d", "#9c7a2e", "#3d7d5a", "#6e4a8c", "#b5ad97"];
-const OUTFITS = ["Standard", "Plated", "Scout", "Heavy"];
-const HATS = ["Bare", "Antenna", "Fin", "Bolts", "Crown", "Lamp"];
-const GUNS = ["Pocket", "Service", "Marshal"];
-const FINISHES = ["Steel", "Brass", "Nickel"];
-const FINISH_GRAD = ["g-steel", "g-brass", "g-nickel"];
-const DEFAULT_LOOK = { skin: 0, outfit: 0, color: 1, hat: 1, gun: 1, finish: 0 };
-
-function shade(hex, f) {
-  const n = parseInt(hex.slice(1), 16);
-  const c = v => Math.max(0, Math.min(255, Math.round(v * f)));
-  return "#" + [c(n >> 16), c((n >> 8) & 255), c(n & 255)]
-    .map(v => v.toString(16).padStart(2, "0")).join("");
-}
-function hashStr(s) {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
-  return h;
-}
-function seededLook(name) {
-  const h = hashStr(name);
-  return { skin: h % 5, outfit: (h >>> 2) % 4, color: (h >>> 4) % 6,
-           hat: (h >>> 7) % 6, gun: (h >>> 9) % 3, finish: (h >>> 11) % 3 };
-}
-const lookOf = p => p.look || seededLook(p.name);
-
-/* One suit: rigid cutout pieces, jointed by CSS transforms.
-   Lives render as lamps on the chest panel; the visor cracks on elimination. */
-function rigSVG(look, phase = 0) {
-  const visor = SKINS[look.skin], col = COLORS[look.color];
-  const colDk = shade(col, .55), colLt = shade(col, .8);
-  const dark = "#10141a";
-
-  let trim = "";
-  if (look.outfit === 1) trim = `
-    <circle cx="46" cy="98" r="1.4" fill="${colDk}"/><circle cx="74" cy="98" r="1.4" fill="${colDk}"/>
-    <circle cx="46" cy="112" r="1.4" fill="${colDk}"/><circle cx="74" cy="112" r="1.4" fill="${colDk}"/>
-    <path d="M30 122 Q60 128 90 122" stroke="${colDk}" stroke-width="2.6" fill="none"/>
-    <path d="M28 96 Q33 90 40 88 M92 96 Q87 90 80 88" stroke="${colDk}" stroke-width="2.2" fill="none"/>`;
-  else if (look.outfit === 2) trim = `
-    <path d="M40 84 L82 126 L74 130 L34 90 Z" fill="${shade(col, .68)}" stroke="${colDk}" stroke-width="1"/>
-    <rect x="56" y="102" width="10" height="7" rx="1.6" fill="#2c261c" stroke="${colDk}" stroke-width="1"/>`;
-  else if (look.outfit === 3) trim = `
-    <rect x="40" y="74" width="40" height="9" rx="4.5" fill="${shade(col, .68)}" stroke="${colDk}" stroke-width="1.2"/>
-    <circle cx="46" cy="78.5" r="1.3" fill="${colDk}"/><circle cx="74" cy="78.5" r="1.3" fill="${colDk}"/>
-    <path d="M26 118 Q60 126 94 118" stroke="${colDk}" stroke-width="4" fill="none"/>`;
-
-  let kit = "";
-  if (look.hat === 1) kit = `
-    <path d="M74 20 L82 7" stroke="#8a8f96" stroke-width="2"/>
-    <circle cx="83" cy="5.5" r="2.6" fill="#c9a24b"/>`;
-  else if (look.hat === 2) kit = `
-    <path d="M50 17 Q60 2 70 17 Z" fill="${colLt}" stroke="${colDk}" stroke-width="1.3"/>`;
-  else if (look.hat === 3) kit = `
-    <rect x="30.5" y="28" width="5" height="9" rx="2" fill="#8a8f96" stroke="#4a4e54" stroke-width="1"/>
-    <rect x="84.5" y="28" width="5" height="9" rx="2" fill="#8a8f96" stroke="#4a4e54" stroke-width="1"/>`;
-  else if (look.hat === 4) kit = `
-    <path d="M50 15 L52 6 L57 12 L60 3 L63 12 L68 6 L70 15 Z" fill="#c9a24b" stroke="#8a6c2c" stroke-width="1.2"/>`;
-  else if (look.hat === 5) kit = `
-    <circle cx="60" cy="15" r="4.4" fill="#2a2e33" stroke="#15181c" stroke-width="1"/>
-    <circle cx="60" cy="15" r="2" fill="#ffd76a"/>`;
-
-  const lamps = Array.from({ length: 5 }, (_, i) =>
-    `<circle class="lamp" cx="${49 + i * 5.6}" cy="103" r="2.1"/>`).join("");
-
-  return `<svg class="rig" viewBox="0 0 120 132" style="--ph:${phase}s">
-    <g class="torso">
-      <rect x="15" y="80" width="15" height="36" rx="5" fill="${shade(col, .62)}" stroke="${colDk}" stroke-width="1.3"/>
-      <path d="M19 88 h7 M19 100 h7" stroke="${colDk}" stroke-width="1.6"/>
-      <path d="M28 132 Q26 100 34 90 Q41 80 60 80 Q79 80 86 90 Q94 100 92 132 Z"
-        fill="${col}" stroke="${colDk}" stroke-width="1.6"/>
-      <path d="M30 118 H90" stroke="${colDk}" stroke-width="1.4" opacity=".6"/>
-      <ellipse cx="36" cy="88" rx="9" ry="6" fill="${colLt}" stroke="${colDk}" stroke-width="1.2"/>
-      <ellipse cx="84" cy="88" rx="9" ry="6" fill="${colLt}" stroke="${colDk}" stroke-width="1.2"/>
-      <rect x="44" y="95" width="32" height="17" rx="3" fill="#1d1913" stroke="${colDk}" stroke-width="1.3"/>
-      ${lamps}
-      <path d="M49 108.5 H71" stroke="#3a342a" stroke-width="1.6"/>
-      ${trim}
-      <g class="head">
-        <rect x="48" y="70" width="24" height="9" rx="3.5" fill="#3c4148" stroke="#23262b" stroke-width="1.2"/>
-        <ellipse cx="60" cy="42" rx="25" ry="27" fill="${col}" stroke="${colDk}" stroke-width="1.6"/>
-        <path d="M42 24 Q50 16 62 17" stroke="#f5efdf" stroke-width="2.4" fill="none" opacity=".16"/>
-        <rect class="visor" x="40" y="30" width="40" height="22" rx="11" fill="${visor}" stroke="${dark}" stroke-width="1.6"/>
-        <path d="M46 35 Q56 32 66 34" stroke="#ffffff" stroke-width="2" fill="none" opacity=".35"/>
-        <g class="eyes-open">
-          <circle cx="52" cy="42" r="2.6" fill="${dark}"/>
-          <circle cx="68" cy="42" r="2.6" fill="${dark}"/>
-          <circle cx="52.9" cy="41" r=".8" fill="#f2f5f7"/><circle cx="68.9" cy="41" r=".8" fill="#f2f5f7"/>
-        </g>
-        <g class="eyes-x" stroke="${dark}" stroke-width="1.7" stroke-linecap="round">
-          <path d="M48.5 38.5 l7 7 M55.5 38.5 l-7 7 M64.5 38.5 l7 7 M71.5 38.5 l-7 7"/>
-        </g>
-        <g class="crack" stroke="#eef2f5" stroke-width="1.1" fill="none" opacity=".8">
-          <path d="M44 33 L52 40 L49 46 M52 40 L58 44 L57 50 M58 44 L66 39"/>
-        </g>
-        <g class="hat">${kit}</g>
-      </g>
-    </g>
-  </svg>`;
-}
-
-/* One revolver: model sets the barrel, finish sets the metal. */
-function gunSVG(look) {
-  const metal = `url(#${FINISH_GRAD[look.finish]})`;
-  const barrel = [26, 40, 54][look.gun];
-  const tip = 54 + barrel;
-  return `<svg class="gun" viewBox="0 0 110 58" width="84" height="44">
-    <rect x="${tip - 2}" y="21" width="3.4" height="14" rx="1.6" fill="#c9a24b"/>
-    <rect x="${tip - 8}" y="17.5" width="2.6" height="5.5" rx="1" fill="#c9a24b"/>
-    <rect x="52" y="23" width="${barrel}" height="10" rx="3.4" fill="${metal}" stroke="#0b0d10" stroke-width="1.1"/>
-    <rect x="27" y="22" width="22" height="13" rx="2.4" fill="${metal}" stroke="#0b0d10" stroke-width="1.1"/>
-    <path d="M30 22 L23 14 l4 -3.4 6.4 6.4 z" fill="${metal}" stroke="#0b0d10" stroke-width="1"/>
-    <circle cx="42" cy="28" r="14" fill="${metal}" stroke="#0b0d10" stroke-width="1.3"/>
-    <g fill="#0b0d10">
-      <circle cx="42" cy="20.3" r="2.5"/><circle cx="48.7" cy="24.2" r="2.5"/>
-      <circle cx="48.7" cy="31.8" r="2.5"/><circle cx="42" cy="35.7" r="2.5"/>
-      <circle cx="35.3" cy="31.8" r="2.5"/><circle cx="35.3" cy="24.2" r="2.5"/>
-    </g>
-    <circle cx="42" cy="28" r="2.1" fill="#c9a24b"/>
-    <path d="M33 35 q-.8 7 -6 12.5 q-3 3.4 -7 1.4 q-3.2 -2 -1.6 -6.2 l5 -10.6 q1.6 -3.1 4.6 -3.1 h5z"
-      fill="url(#g-wood)" stroke="#1c1108" stroke-width="1"/>
-    <path d="M36 37 a5.8 5.8 0 1 0 9.4 2.4" fill="none" stroke="#c9a24b" stroke-width="1.7"/>
-  </svg>`;
-}
-
 /* ---------------- persistent settings ---------------- */
-const store = {
-  get games() { return +(localStorage.getItem("lc.games") || 0); },
-  set games(v) { localStorage.setItem("lc.games", v); },
-  get felt() { return localStorage.getItem("lc.felt") || "green"; },
-  set felt(v) { localStorage.setItem("lc.felt", v); },
-  get finish() { return localStorage.getItem("lc.finish") || "steel"; },
-  set finish(v) { localStorage.setItem("lc.finish", v); },
-  get streamer() { return localStorage.getItem("lc.streamer") === "1"; },
-  set streamer(v) { localStorage.setItem("lc.streamer", v ? "1" : "0"); },
-  get look() {
-    try { return { ...DEFAULT_LOOK, ...JSON.parse(localStorage.getItem("lc.look")) }; }
-    catch { return { ...DEFAULT_LOOK }; }
-  },
-  set look(v) { localStorage.setItem("lc.look", JSON.stringify(v)); }
+const ls = {
+  get(k, d) { try { const v = localStorage.getItem("lc." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("lc." + k, JSON.stringify(v)); } catch {} }
 };
-const UNLOCKS = { felt: { green: 0, oxblood: 3, midnight: 8 } };
+const store = {
+  get games() { return +ls.get("games", 0) || 0; }, set games(v) { ls.set("games", v); },
+  get awning() { return ls.get("awning", "teal"); }, set awning(v) { ls.set("awning", v); },
+  get streamer() { return !!ls.get("streamer", false); }, set streamer(v) { ls.set("streamer", !!v); },
+  get quality() { return ls.get("quality", "auto"); }, set quality(v) { ls.set("quality", v); },
+  get motion() { return ls.get("motion", "system"); }, set motion(v) { ls.set("motion", v); },
+  get volume() { const v = ls.get("volume", 80); return typeof v === "number" ? v : 80; }, set volume(v) { ls.set("volume", v); },
+  get look() {
+    let l = ls.get("look2", null);
+    /* a first-time player starts with their own paint job, not everyone's default */
+    if (!l) { l = W.seededLook(this.name); ls.set("look2", l); }
+    return W.cleanLook(l);
+  },
+  set look(v) { ls.set("look2", W.cleanLook(v)); },
+  get name() {
+    let n = ls.get("name", "");
+    if (typeof n !== "string" || !n.trim()) { n = W.carnivalName(); ls.set("name", n); }
+    return n;
+  },
+  set name(v) { ls.set("name", String(v).slice(0, 16)); },
+  get rules() { return { lives: 3, itemsPerDeal: 2, heat: 1, ...ls.get("rules", {}) }; }, set rules(v) { ls.set("rules", v); }
+};
+/* first visit: legacy games count carries over */
+try { const old = localStorage.getItem("lc.games"); if (old && !isNaN(+old)) store.games = +old; } catch {}
+const params = new URLSearchParams(location.search);
+if (params.has("stream")) store.streamer = params.get("stream") !== "0";
+
+function applyMotion() {
+  const sys = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const m = store.motion;
+  document.documentElement.dataset.motion = m === "reduce" || (m === "system" && sys) ? "reduce" : "full";
+}
+applyMotion();
+matchMedia("(prefers-reduced-motion: reduce)").addEventListener?.("change", applyMotion);
+const reduced = () => document.documentElement.dataset.motion === "reduce";
+document.body.classList.toggle("stream", store.streamer);
 
 /* ---------------- audio ----------------
-   All procedural WebAudio through one compressed bus. The suspense layer:
-   hammer cock and a heartbeat under every aim, casing tinks, a felt slide
-   when the gun changes hands, a low thud for eliminations, a resolve sting. */
+   Procedural WebAudio through one compressed bus. It also feeds a stream
+   destination so a saved clip carries the booth's sound. */
 const AC = window.AudioContext || window.webkitAudioContext;
-let actx = null, bus = null;
+let actx = null, bus = null, master = null, recDest = null;
 function audio() {
   if (!actx) {
     actx = new AC();
     bus = actx.createDynamicsCompressor();
     bus.threshold.value = -18; bus.knee.value = 20; bus.ratio.value = 6;
-    const master = actx.createGain();
-    master.gain.value = .9;
+    master = actx.createGain();
+    master.gain.value = store.volume / 100;
     bus.connect(master).connect(actx.destination);
+    if (actx.createMediaStreamDestination) { recDest = actx.createMediaStreamDestination(); master.connect(recDest); }
   }
   if (actx.state === "suspended") actx.resume();
   return actx;
 }
 function tone({ f = 440, type = "sine", g = .2, dur = .12, when = 0, fEnd = null }) {
-  const a = audio(), t0 = a.currentTime + when;
+  if (!actx) return;
+  const a = actx, t0 = a.currentTime + when;
   const o = a.createOscillator(), gn = a.createGain();
   o.type = type;
   o.frequency.setValueAtTime(f, t0);
@@ -189,7 +90,8 @@ function tone({ f = 440, type = "sine", g = .2, dur = .12, when = 0, fEnd = null
   o.start(t0); o.stop(t0 + dur + .02);
 }
 function noiseHit({ dur = .3, g = .5, when = 0, fc = 1000, type = "lowpass", q = 1 }) {
-  const a = audio(), t0 = a.currentTime + when;
+  if (!actx) return;
+  const a = actx, t0 = a.currentTime + when;
   const len = Math.ceil(a.sampleRate * dur), buf = a.createBuffer(1, len, a.sampleRate);
   const d = buf.getChannelData(0);
   for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2);
@@ -199,17 +101,8 @@ function noiseHit({ dur = .3, g = .5, when = 0, fc = 1000, type = "lowpass", q =
   s.connect(f).connect(gn).connect(bus);
   s.start(t0);
 }
-/* trigger click: two-part mechanical snap */
-function sClick() {
-  tone({ f: 1900, type: "square", g: .09, dur: .045 });
-  tone({ f: 620, type: "square", g: .05, dur: .04, when: .018 });
-}
-/* hammer drawn back: double ratchet, lower and drier than the click */
-function sCock() {
-  tone({ f: 460, type: "square", g: .07, dur: .035 });
-  tone({ f: 700, type: "square", g: .08, dur: .045, when: .09 });
-}
-/* heartbeat under the aim: lub-dub, twice */
+const sClick = () => { tone({ f: 1900, type: "square", g: .09, dur: .045 }); tone({ f: 620, type: "square", g: .05, dur: .04, when: .018 }); };
+const sCock = () => { tone({ f: 460, type: "square", g: .07, dur: .035 }); tone({ f: 700, type: "square", g: .08, dur: .045, when: .09 }); };
 function sHeart() {
   for (let i = 0; i < 2; i++) {
     const base = .15 + i * .58;
@@ -217,28 +110,14 @@ function sHeart() {
     tone({ f: 64, g: .34, dur: .14, when: base + .2, fEnd: 42 });
   }
 }
-/* gunshot: noise crack over a deep sine thump */
-function sBang() {
-  noiseHit({ dur: .38, g: .8, fc: 850 });
-  noiseHit({ dur: .1, g: .3, fc: 3200, type: "highpass" });
-  tone({ f: 130, g: .7, dur: .3, fEnd: 40 });
-}
-/* ejected casing bouncing on the table */
-function sTink() {
-  tone({ f: 2600, type: "triangle", g: .11, dur: .06 });
-  tone({ f: 2150, type: "triangle", g: .06, dur: .05, when: .13 });
-  tone({ f: 2900, type: "triangle", g: .035, dur: .04, when: .23 });
-}
-/* revolver sliding across the felt */
-function sSlide() { noiseHit({ dur: .34, g: .16, fc: 620, type: "bandpass", q: .9 }); }
-/* soft exhale after a blank */
-function sPuff() { noiseHit({ dur: .28, g: .1, fc: 1500, type: "highpass", when: .12 }); }
-/* elimination: low drop with a body of noise */
-function sThud() {
-  tone({ f: 115, g: .6, dur: .5, fEnd: 36 });
-  noiseHit({ dur: .22, g: .22, fc: 320 });
-}
-/* end of game resolve */
+function sBang() { noiseHit({ dur: .38, g: .8, fc: 850 }); noiseHit({ dur: .1, g: .3, fc: 3200, type: "highpass" }); tone({ f: 130, g: .7, dur: .3, fEnd: 40 }); }
+/* tin target slamming flat on its hinge */
+function sClang() { tone({ f: 340, type: "triangle", g: .22, dur: .5, when: .05, fEnd: 300 }); tone({ f: 523, type: "triangle", g: .12, dur: .35, when: .05 }); noiseHit({ dur: .12, g: .25, fc: 2400, type: "bandpass", q: 2, when: .05 }); }
+const sTink = () => { tone({ f: 2600 + rnd(500), type: "triangle", g: .08, dur: .06 }); };
+const sFlip = () => { noiseHit({ dur: .04, g: .12, fc: 2600, type: "highpass" }); };
+const sSlide = () => noiseHit({ dur: .42, g: .16, fc: 520, type: "bandpass", q: .9 });
+const sPuff = () => noiseHit({ dur: .28, g: .1, fc: 1500, type: "highpass", when: .12 });
+const sThud = () => { tone({ f: 115, g: .6, dur: .5, fEnd: 36 }); noiseHit({ dur: .22, g: .22, fc: 320 }); };
 function sWin() {
   tone({ f: 392, type: "triangle", g: .16, dur: .2 });
   tone({ f: 523, type: "triangle", g: .16, dur: .2, when: .18 });
@@ -246,271 +125,248 @@ function sWin() {
 }
 function sSpin() { for (let i = 0; i < 8; i++) setTimeout(sClick, i * (45 + i * 10)); }
 
+/* ---------------- the booth ---------------- */
+let stage = null;
+function wantsLite() {
+  const q = store.quality;
+  if (q === "lite") return true;
+  if (q === "full") return false;
+  const cv = document.createElement("canvas");
+  const gl = cv.getContext("webgl2") || cv.getContext("webgl");
+  if (!gl) return true;
+  const mem = navigator.deviceMemory || 4, cores = navigator.hardwareConcurrency || 4;
+  return mem <= 2 || cores <= 2;
+}
+async function mountBooth() {
+  const host = $("#booth");
+  const awn = W.AWNINGS.find(a => a.id === store.awning) || W.AWNINGS[0];
+  if (!wantsLite()) {
+    try {
+      const { createBooth } = await import("./booth3d.mjs");
+      stage = await createBooth(host, { awning: awn.ink });
+    } catch (err) {
+      console.warn("3D booth unavailable, using the lite booth", err);
+      stage = null;
+    }
+  }
+  if (!stage) {
+    const { createBooth2D } = await import("./booth2d.mjs");
+    stage = await createBooth2D(host, { awning: awn.ink });
+  }
+  stage.on("tink", sTink);
+  stage.on("flip", sFlip);
+  stage.onFrame(placeHits);
+  $("#loading").classList.add("done");
+}
+
 /* ---------------- ui state ---------------- */
 const ui = {
   mode: null,          /* solo | hot | online */
-  st: null,            /* local authoritative state */
-  pub: null,           /* rendered snapshot */
-  you: 0,              /* seat shown in the hand bar; null = spectator */
-  humans: [0],
-  ws: null, host: false, spectating: false,
+  st: null, pub: null,
+  you: 0, humans: [0],
+  ws: null, host: false, spectating: false, code: null,
   queue: [], anim: false, canAct: false,
   pendingState: null, pendingPeek: null,
-  botTimer: 0, counted: false
+  botTimer: 0, counted: false, gunAt: null,
+  reel: null, roster: []
 };
-window.LC = ui;   /* debug handle */
+window.LC = ui;
 
-/* ---------------- helpers ---------------- */
 const nameOf = pid => ui.pub?.players.find(p => p.id === pid)?.name || "?";
-const isYou = pid => pid === ui.you;
-const N = pid => isYou(pid) ? "You" : nameOf(pid);          /* subject */
-const No = pid => isYou(pid) ? "you" : nameOf(pid);          /* object */
-const Np = pid => isYou(pid) ? "Your" : nameOf(pid) + "'s";  /* possessive */
+const isYou = pid => pid === ui.you && !ui.spectating;
+const N = pid => isYou(pid) ? "You" : esc(nameOf(pid));
+const No = pid => isYou(pid) ? "you" : esc(nameOf(pid));
+const Np = pid => isYou(pid) ? "Your" : esc(nameOf(pid)) + "'s";
 const V = (pid, third, second) => isYou(pid) ? second : third;
-function show(id) { $$(".screen").forEach(s => s.classList.add("hidden")); $(id).classList.remove("hidden"); }
-function modal(id, on = true) { $(id).classList.toggle("hidden", !on); }
+const lookOf = p => p?.look ? W.cleanLook(p.look) : W.seededLook(p?.name || "house");
 
+function show(id) {
+  $$(".screen").forEach(s => s.classList.add("hidden"));
+  $(id).classList.remove("hidden");
+  syncInset();
+}
+/* on wide screens the ticket tape covers the right edge: centre the booth in what's left */
+function syncInset() {
+  if (!stage) return;
+  if (!$("#menu").classList.contains("hidden")) {
+    const r = $(".board").getBoundingClientRect();
+    stage.setInset(0, innerWidth < innerHeight ? innerHeight - r.top + 8 : 0);
+    return;
+  }
+  if (!$("#lobby").classList.contains("hidden")) {
+    const r = $(".booth-window").getBoundingClientRect();
+    if (r.left > innerWidth * .35) stage.setInset(innerWidth - r.left + 16, 0);
+    else stage.setInset(0, innerHeight - r.top + 12);
+    return;
+  }
+  const tape = $("#tape");
+  const inGame = !$("#game").classList.contains("hidden");
+  if (!inGame) { stage.setInset(0, 0); return; }
+  /* wide: the tape strip sits on the right; narrow: the counter UI owns the bottom */
+  if (getComputedStyle(tape).position === "fixed" && !tape.classList.contains("open")) stage.setInset(tape.offsetWidth + 14, 0);
+  else stage.setInset(0, Math.max(0, innerHeight - tape.getBoundingClientRect().top + 8));
+}
+/* the paint shop docks beside (or under) the preview target: keep the target in view */
+function paintInset() {
+  const d = $("#paintDlg");
+  if (!d.open) { syncInset(); return; }
+  const r = d.getBoundingClientRect();
+  if (r.left > innerWidth * .35) stage.setInset(innerWidth - r.left + 16, 0);
+  else stage.setInset(0, innerHeight - r.top + 12);
+}
+addEventListener("resize", () => { if ($("#paintDlg").open) paintInset(); else syncInset(); });
+function closeAll() { $$("dialog[open]").forEach(d => d.close()); }
+
+/* ---------------- ledger: the ticket tape ---------------- */
 function log(html, cls = "") {
   const p = document.createElement("p");
   if (cls) p.className = cls;
   p.innerHTML = html;
-  $("#ledger").appendChild(p);
-  $("#ledger").scrollTop = $("#ledger").scrollHeight;
+  const roll = $("#ledger");
+  roll.appendChild(p);
+  while (roll.childElementCount > 120) roll.firstElementChild.remove();
+  roll.scrollTop = roll.scrollHeight;
+  $("#tapeLatest").innerHTML = html;
+  announce(p.textContent);
+}
+let srTimer = 0;
+function announce(text) {
+  const sr = $("#sr");
+  clearTimeout(srTimer);
+  const line = document.createElement("p");
+  line.textContent = text;
+  sr.appendChild(line);
+  while (sr.childElementCount > 4) sr.firstElementChild.remove();
+  srTimer = setTimeout(() => { sr.innerHTML = ""; }, 8000);
+}
+$("#tapeToggle").onclick = () => {
+  const tape = $("#tape"), open = !tape.classList.contains("open");
+  tape.classList.toggle("open", open);
+  $("#tapeToggle").setAttribute("aria-expanded", open);
+  if (open) { const r = $("#ledger"); r.scrollTop = r.scrollHeight; }
+};
+
+/* ---------------- hit buttons over the tin targets ---------------- */
+function buildHits() {
+  const layer = $("#hit");
+  layer.innerHTML = "";
+  if (!ui.pub) return;
+  for (const p of ui.pub.players) {
+    const b = document.createElement("button");
+    b.className = "tbtn";
+    b.id = "hit" + p.id;
+    b.tabIndex = -1;
+    b.innerHTML = `<span class="aim"><svg class="i"><use href="#i-sight"/></svg><span class="aim-t"></span></span><span class="ttag"></span>`;
+    b.addEventListener("click", () => humanShoot(p.id));
+    layer.appendChild(b);
+  }
+  renderTags();
+}
+function placeHits() {
+  if (!ui.pub || !stage) return;
+  for (const p of ui.pub.players) {
+    const el = document.getElementById("hit" + p.id);
+    const box = stage.screenBox(p.id);
+    if (!el || !box) continue;
+    /* whole pixels, and only when the target really moved */
+    const key = [box.x, box.y, box.w, box.h].map(v => Math.round(v / 2) * 2).join(",");
+    if (el.dataset.box === key) continue;
+    el.dataset.box = key;
+    const [x, y, w, h] = key.split(",");
+    el.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
+  }
+}
+function renderTags() {
+  if (!ui.pub) return;
+  for (const p of ui.pub.players) {
+    const el = document.getElementById("hit" + p.id);
+    if (!el) continue;
+    const tag = el.querySelector(".ttag");
+    const icons = [];
+    if (!p.alive) icons.push(`<span class="out">Out</span>`);
+    if (p.shield) icons.push(`<svg class="i state" aria-hidden="true"><use href="#i-shield"/></svg>`);
+    if (p.cuffed) icons.push(`<svg class="i state" aria-hidden="true"><use href="#i-cuffs"/></svg>`);
+    if (!isYou(p.id)) {
+      /* a crowded phone rail gets one ticket with the count; the button's label lists them */
+      if (innerWidth < 761 && ui.pub.players.length > 4) {
+        if (p.items.length) icons.push(`<span class="tcount" aria-hidden="true"><svg class="i"><use href="#i-tape"/></svg>${p.items.length}</span>`);
+      } else p.items.forEach(k => icons.push(`<svg class="i" aria-hidden="true"><use href="#${ICON[k]}"/></svg>`));
+    }
+    tag.innerHTML = icons.join("");
+    const cap = ui.pub.rules?.lives ?? 3;
+    const state = [p.alive ? `${p.lives} of ${cap} lives` : "out",
+                   p.shield ? "shielded" : "", p.cuffed ? "cuffed" : "",
+                   !isYou(p.id) && p.items.length ? "holding " + p.items.map(k => E.ITEMS[k].name).join(", ") : ""]
+      .filter(Boolean).join(", ");
+    el.setAttribute("aria-label", `${isYou(p.id) ? "You" : p.name}: ${state}`);
+  }
+}
+function setTargets(on) {
+  if (!ui.pub) return;
+  for (const p of ui.pub.players) {
+    const el = document.getElementById("hit" + p.id);
+    if (!el) continue;
+    const live = on && p.alive;
+    el.classList.toggle("targetable", live);
+    el.tabIndex = live ? 0 : -1;
+    el.disabled = !live;
+    el.querySelector(".aim-t").textContent = isYou(p.id) ? "Pull on yourself" : `Pull on ${p.name}`;
+    if (live) el.setAttribute("aria-label", isYou(p.id) ? "Pull on yourself" : `Pull on ${p.name}, ${p.lives} lives`);
+  }
+  if (!on) renderTags();
 }
 
 /* ---------------- render ---------------- */
-function shellSvg(sym) { return `<svg><use href="#${sym}"/></svg>`; }
-
-function buildSeats() {
-  const wrap = $("#seats"); wrap.innerHTML = "";
-  for (const p of ui.pub.players) {
-    const s = document.createElement("div");
-    s.className = "seat"; s.id = "seat" + p.id;
-    const phase = -((hashStr(p.name) % 40) / 10);   /* desync the idle loops */
-    s.innerHTML = `
-      <div class="seatrow">
-        <div class="rigbox">${rigSVG(lookOf(p), phase)}</div>
-        <div class="gear"></div>
-      </div>
-      <button class="cap"><svg class="i"><use href="#i-cross"/></svg><span class="nm"></span></button>`;
-    s.querySelector(".cap").addEventListener("click", () => humanShoot(p.id));
-    wrap.appendChild(s);
-  }
-  $("#gunLayer").innerHTML = `<div id="gunRot"></div>`;
-  layoutSeats();
-  renderState();
-  placeGun(ui.pub.turn, false);
-  /* seats settle size after fonts and media queries apply; follow them */
-  ui.seatRO?.disconnect();
-  ui.seatRO = new ResizeObserver(() => ui.pub && layoutSeats());
-  const s0 = wrap.querySelector(".seat");
-  if (s0) ui.seatRO.observe(s0);
-}
-
-function layoutSeats() {
-  const t = $("#table").getBoundingClientRect();
-  if (!t.width) return;
-  const s0 = $(".seat");
-  const sw = s0 ? s0.offsetWidth : 128, sh = s0 ? s0.offsetHeight : 160;
-  const cx = t.width / 2, cy = t.height / 2;
-  const rx = Math.min(t.width / 2 - sw / 2 - 10, t.width * .38);
-  const ry = Math.min(t.height / 2 - sh / 2 - 12, t.height * .42);
-  const n = ui.pub.players.length;
-  const anchor = ui.you ?? 0;   /* your seat at the bottom */
-  ui.layout = { cx, cy, rx, ry, n, anchor };
-  ui.tblW = t.width; ui.tblH = t.height;
-  ui.pub.players.forEach((p, i) => {
-    const ang = Math.PI / 2 + ((i - anchor + n) % n) / n * Math.PI * 2;
-    const s = $("#seat" + p.id);
-    s.style.left = (cx + Math.cos(ang) * rx) + "px";
-    s.style.top = (cy + Math.sin(ang) * ry) + "px";
-  });
-  if (ui.gunAt != null) placeGun(ui.gunAt, false);
-}
-window.addEventListener("resize", () => ui.pub && layoutSeats());
-/* keep a live reference: an unreferenced observer can be garbage collected */
-const tableRO = new ResizeObserver(() => ui.pub && layoutSeats());
-tableRO.observe($("#table"));
-
-/* ---------------- the traveling gun ---------------- */
-function seatAngle(pid) {
-  const L = ui.layout, i = ui.pub.players.findIndex(p => p.id === pid);
-  return Math.PI / 2 + ((i - L.anchor + L.n) % L.n) / L.n * Math.PI * 2;
-}
-function seatXY(pid) {
-  const L = ui.layout, a = seatAngle(pid);
-  if (Number.isNaN(a)) return { x: L.cx, y: L.cy };
-  return { x: L.cx + Math.cos(a) * L.rx, y: L.cy + Math.sin(a) * L.ry };
-}
-function gunXY(pid) {
-  const L = ui.layout, a = seatAngle(pid);
-  return { x: L.cx + Math.cos(a) * L.rx * .2, y: L.cy + Math.sin(a) * L.ry * .2 };
-}
-/* Put the revolver on the felt in front of pid, drawn in their design. */
-function placeGun(pid, animate = true) {
-  const rot = $("#gunRot");
-  if (pid == null || !ui.layout || !rot) return;
-  const layer = $("#gunLayer");
-  const p = ui.pub.players.find(q => q.id === pid);
-  if (!p) return;
-  if (ui.gunSkin !== p.id) { rot.innerHTML = gunSVG(lookOf(p)); ui.gunSkin = p.id; }
-  const g = gunXY(pid);
-  if (!animate) { layer.style.transition = "none"; rot.style.transition = "none"; }
-  layer.style.left = g.x + "px";
-  layer.style.top = g.y + "px";
-  const c = ui.layout;
-  rot.style.transform = `rotate(${Math.atan2(c.cy - g.y, c.cx - g.x) * 180 / Math.PI}deg)`;
-  if (!animate) requestAnimationFrame(() => { layer.style.transition = ""; rot.style.transition = ""; });
-  ui.gunAt = pid;
-}
-/* Swing the barrel from the holder's spot toward the target's seat. */
-function aimGun(tid) {
-  const rot = $("#gunRot");
-  if (ui.gunAt == null || !ui.layout || !rot) return;
-  const g = gunXY(ui.gunAt), t = seatXY(tid);
-  rot.style.transform =
-    `rotate(${Math.atan2(t.y - g.y, t.x - g.x) * 180 / Math.PI}deg)`;
-}
-function recoilGun() {
-  const rot = $("#gunRot");
-  if (!rot) return;
-  rot.classList.add("recoil");
-  setTimeout(() => rot.classList.remove("recoil"), 400);
-}
-const rigOf = pid => $("#seat" + pid + " .rig");
-
-/* ---------------- impact effects ---------------- */
-function fxSpawn(html, x, y) {
-  const d = document.createElement("div");
-  d.className = "fxn";
-  d.style.left = x + "px"; d.style.top = y + "px";
-  d.innerHTML = html;
-  $("#fxLayer").appendChild(d);
-  return d;
-}
-const fxDone = (el, ms) => setTimeout(() => el.remove(), ms);
-
-function fxMuzzle(x, y, deg) {
-  const el = fxSpawn(`<svg width="46" height="46" viewBox="-23 -23 46 46" style="transform:rotate(${deg}deg)">
-    <path d="M3 0 L21 -5.5 L14 0 L21 5.5 Z" fill="#ffd76a"/>
-    <path d="M1 -3.5 L15 -10 M1 3.5 L15 10" stroke="#ffb84a" stroke-width="2"/>
-    <circle cx="4.5" cy="0" r="4.5" fill="#fff1c4"/>
-  </svg>`, x, y);
-  el.animate(
-    [{ opacity: 1, transform: "translate(-50%,-50%) scale(.5)" },
-     { opacity: 0, transform: "translate(-50%,-50%) scale(1.5)" }],
-    { duration: 180, easing: "ease-out" });
-  fxDone(el, 200);
-}
-function fxCasing(x, y, deg) {
-  const el = fxSpawn(`<svg width="12" height="12" viewBox="0 0 12 12">
-    <rect x="3.5" y="1" width="5" height="10" rx="1.8" fill="#b08d3f" stroke="#6b5321" stroke-width=".8"/>
-  </svg>`, x, y);
-  const side = (deg - 90) * Math.PI / 180;
-  const dx = Math.cos(side) * (24 + rnd(18)), dy = Math.sin(side) * (24 + rnd(18));
-  el.animate([
-    { transform: "translate(-50%,-50%) rotate(0)", opacity: 1 },
-    { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy - 30}px)) rotate(260deg)`, opacity: 1, offset: .45 },
-    { transform: `translate(calc(-50% + ${dx * 1.7}px), calc(-50% + ${dy + 24}px)) rotate(480deg)`, opacity: 0 }
-  ], { duration: 720, easing: "cubic-bezier(.3,.6,.6,1)" });
-  fxDone(el, 740);
-  setTimeout(sTink, 420);
-}
-function fxBurst(x, y) {
-  for (let i = 0; i < 9; i++) {
-    const el = fxSpawn(`<svg width="10" height="10"><circle cx="5" cy="5" r="${2 + Math.random() * 2.2}" fill="${i % 3 ? "#a8281f" : "#6e150f"}"/></svg>`, x, y);
-    const a = Math.random() * Math.PI * 2, d = 16 + rnd(30);
-    el.animate([
-      { transform: "translate(-50%,-50%)", opacity: 1 },
-      { transform: `translate(calc(-50% + ${Math.cos(a) * d}px), calc(-50% + ${Math.sin(a) * d + 9}px)) scale(.5)`, opacity: 0 }
-    ], { duration: 430 + rnd(160), easing: "ease-out" });
-    fxDone(el, 620);
-  }
-  const splat = fxSpawn(`<svg width="46" height="30" viewBox="0 0 46 30">
-    <ellipse cx="18" cy="16" rx="9" ry="5.6" fill="#5a1713"/>
-    <ellipse cx="31" cy="12" rx="5" ry="3.4" fill="#6e150f"/>
-    <ellipse cx="27" cy="21" rx="3.4" ry="2.2" fill="#5a1713"/>
-  </svg>`, x, y + 28);
-  splat.animate([{ opacity: .85 }, { opacity: .85, offset: .6 }, { opacity: 0 }], { duration: 3600 });
-  fxDone(splat, 3650);
-}
-function fxPuff(x, y) {
-  const el = fxSpawn(`<svg width="26" height="26"><circle cx="13" cy="13" r="8" fill="#9a968c" opacity=".5"/></svg>`, x, y);
-  el.animate([
-    { transform: "translate(-50%,-50%) scale(.4)", opacity: .55 },
-    { transform: "translate(-50%,-95%) scale(1.7)", opacity: 0 }
-  ], { duration: 720, easing: "ease-out" });
-  fxDone(el, 740);
-}
-function fxShake() {
-  $("#table").animate([
-    { transform: "translate(0,0)" }, { transform: "translate(-5px,3px)" },
-    { transform: "translate(5px,-3px)" }, { transform: "translate(-3px,-2px)" },
-    { transform: "translate(2px,2px)" }, { transform: "translate(0,0)" }
-  ], { duration: 300 });
-}
-
 function renderState() {
   const pub = ui.pub;
-  if (!pub) return;
-  for (const p of pub.players) {
-    const s = $("#seat" + p.id);
-    if (!s) continue;
-    s.classList.toggle("dead", !p.alive);
-    s.classList.toggle("current", pub.turn === p.id && p.alive && !pub.over);
-    s.classList.toggle("me", p.id === ui.you);
-    s.querySelector(".nm").innerHTML = p.alive ? p.name : `${p.name}<span class="out">out</span>`;
-    const cap = pub.rules?.lives ?? 3;
-    s.querySelectorAll(".lamp").forEach((l, i) => {
-      l.style.display = i < cap ? "" : "none";
-      l.classList.toggle("on", i < p.lives);
-      l.classList.toggle("low", p.alive && p.lives === 1 && i === 0);
-    });
-    const state =
-      (p.shield ? `<svg class="i state"><use href="#i-shield"/></svg>` : "") +
-      (p.cuffed ? `<svg class="i state"><use href="#i-cuffs"/></svg>` : "");
-    const held = p.id === ui.you ? "" :
-      p.items.map(k => `<svg class="i"><use href="#${ICON[k]}"/></svg>`).join("");
-    s.querySelector(".gear").innerHTML = state + held;
-  }
-  $("#roundLabel").textContent = `Round ${pub.round}`;
-  $("#shellRow").innerHTML =
-    Array(pub.live).fill(shellSvg("sh-live")).join("") +
-    `<span class="gap"></span>` +
-    Array(pub.blank).fill(shellSvg("sh-blank")).join("");
+  if (!pub || !stage) return;
+  stage.update(pub);
+  stage.counts(pub.round, pub.live, pub.blank);
+  renderTags();
   renderHand();
 }
-
 function renderHand() {
-  const wrap = $("#hand"); wrap.innerHTML = "";
-  const me = ui.you == null ? null : ui.pub.players.find(p => p.id === ui.you);
-  if (me) me.items.forEach((k, idx) => {
+  const wrap = $("#hand");
+  wrap.innerHTML = "";
+  const me = ui.spectating || ui.you == null ? null : ui.pub?.players.find(p => p.id === ui.you);
+  if (!me) return;
+  me.items.forEach((k, idx) => {
     const b = document.createElement("button");
-    b.className = "itembtn";
-    b.title = E.ITEMS[k].desc;
-    b.innerHTML = `<svg class="i"><use href="#${ICON[k]}"/></svg>${E.ITEMS[k].name}`;
+    b.className = "item";
+    b.dataset.tip = E.ITEMS[k].desc;
+    b.setAttribute("aria-label", `${E.ITEMS[k].name}: ${E.ITEMS[k].desc}`);
+    b.innerHTML = `<svg class="i" aria-hidden="true"><use href="#${ICON[k]}"/></svg>${E.ITEMS[k].name}`;
     b.disabled = !ui.canAct;
     b.addEventListener("click", () => humanItem(idx));
     wrap.appendChild(b);
   });
-  /* the hand changes the action bar's height; frame-based observers can be
-     throttled, so measure the table directly and re-lay seats if it moved */
-  if (ui.layout) {
-    const t = $("#table").getBoundingClientRect();
-    if (Math.abs(t.width - ui.tblW) > .5 || Math.abs(t.height - ui.tblH) > .5) layoutSeats();
-  }
+}
+function setPrompt(html, hint = "") {
+  $("#prompt").innerHTML = html || "&nbsp;";
+  $("#hint").textContent = hint;
+}
+function stamp(kind) {
+  const s = $("#stamp");
+  s.className = "stamp";
+  void s.offsetWidth;
+  s.textContent = kind === "bang" ? "BANG" : "click";
+  s.className = "stamp " + kind;
+}
+function flash() {
+  if (reduced()) return;
+  $("#flash").animate([{ opacity: .32 }, { opacity: 0 }], { duration: 110, easing: "ease-out" });
 }
 
-function setPrompt(html) { $("#prompt").innerHTML = html || "&nbsp;"; }
-function setTargets(on) {
-  for (const p of ui.pub.players) {
-    const s = $("#seat" + p.id);
-    s.classList.toggle("targetable", on && p.alive);
-    s.querySelector(".cap").title =
-      on && p.alive ? (p.id === ui.you ? "Shoot yourself" : `Shoot ${p.name}`) : "";
-  }
+/* ---------------- the replay record ----------------
+   Every pull is kept with the table as it stood, so the reel can run the
+   gun's track back exactly. */
+function snapPlayers(pub) {
+  return pub.players.map(p => ({ id: p.id, name: p.name, look: p.look, lives: p.lives, alive: p.alive,
+                                 shield: p.shield, cuffed: p.cuffed, items: [] }));
 }
-
+function newReel(pub) {
+  ui.reel = { start: snapPlayers(pub), cap: pub.rules?.lives ?? 3, moments: [], stats: { live: 0, blank: 0, selfKeep: 0 }, holder: null };
+}
 
 /* ---------------- event animation ---------------- */
 function enqueue(events) {
@@ -529,19 +385,25 @@ async function animate(ev) {
   switch (ev.e) {
     case "round": {
       pub.round = ev.round; pub.live = ev.live; pub.blank = ev.blank;
-      if (ui.st) ui.pub = E.pub(ui.st);       /* pick up dealt items locally */
-      log(`The dealer loads <b>${ev.live} live</b> and <b>${ev.blank} blank</b>, then spins the cylinder.`, "sys");
+      if (ui.st) ui.pub = E.pub(ui.st);
+      log(`Round ${ev.round}. The barker racks <b>${ev.live} live</b> and <b>${ev.blank} blank</b>, then spins the cylinder.`, "sys");
       sSpin();
-      renderState();
-      await delay(1000);
+      stage.round(ev.round, ev.live, ev.blank);
+      renderTags(); renderHand();
+      await delay(reduced() ? 400 : 1100);
       break;
     }
     case "turn": {
       pub.turn = ev.pid;
-      renderState();
-      if (ui.gunAt != null && ui.gunAt !== ev.pid) sSlide();
-      placeGun(ev.pid, true);
-      await delay(450);
+      const p = pub.players.find(q => q.id === ev.pid);
+      stage.setActive(ev.pid);
+      renderTags();
+      if (ui.gunAt !== ev.pid) {
+        if (ui.gunAt != null) sSlide();
+        ui.gunAt = ev.pid;
+        await stage.giveGun(ev.pid, lookOf(p), true);
+      }
+      if (ui.reel) ui.reel.holder = ev.pid;
       break;
     }
     case "skip": {
@@ -552,119 +414,81 @@ async function animate(ev) {
       await delay(700);
       break;
     }
-    case "item": {
-      await animateItem(ev);
-      break;
-    }
+    case "item": await animateItem(ev); break;
     case "shot": {
+      const t = pub.players.find(q => q.id === ev.tid);
+      if (!t) break;
+      const before = snapPlayers(pub);
       const self = ev.pid === ev.tid;
-      aimGun(ev.tid);
-      sCock();
-      sHeart();
-      const tRig = rigOf(ev.tid);
-      if (tRig) tRig.classList.add("gasp");
       const aimLine = self
         ? `<b>${N(ev.pid)}</b> ${V(ev.pid, "turns", "turn")} the gun inward.`
         : `<b>${N(ev.pid)}</b> ${V(ev.pid, "draws", "draw")} on <b>${No(ev.tid)}</b>.`;
-      setPrompt(aimLine);
+      setPrompt(aimLine, "");
       log(aimLine);
-      await delay(1400);
-      const msg = $("#centerMsg");
-      const t = pub.players.find(q => q.id === ev.tid);
-      if (!t) break;   /* stale event from an abandoned game */
-      /* geometry for the effects layer */
-      const g = ui.gunAt != null ? gunXY(ui.gunAt) : null;
-      const ts = seatXY(ev.tid);
-      const deg = g ? Math.atan2(ts.y - g.y, ts.x - g.x) * 180 / Math.PI : 0;
-      const mx = g ? g.x + Math.cos(deg * Math.PI / 180) * 48 : 0;
-      const my = g ? g.y + Math.sin(deg * Math.PI / 180) * 48 : 0;
+      sCock(); sHeart();
+      await stage.aim(ev.pid, ev.tid);
+      const firing = stage.fire(ev);
       if (ev.live) {
         pub.live = Math.max(0, pub.live - 1);
-        sBang();
-        recoilGun();
-        fxShake();
-        if (g) { fxMuzzle(mx, my, deg); fxCasing(g.x, g.y, deg); }
-        fxBurst(ts.x, ts.y - 16);
-        if (tRig) {
-          tRig.classList.add("flinch");
-          setTimeout(() => tRig.classList.remove("flinch"), 600);
-        }
-        $("#flash").style.opacity = .8;
-        setTimeout(() => $("#flash").style.opacity = 0, 70);
-        msg.textContent = "BANG"; msg.className = "show bang";
+        sBang(); flash(); stamp("bang");
+        if (!ev.shielded) setTimeout(sClang, 60);
         if (ev.shielded) {
           t.shield = false;
-          log(`Live. <b>${Np(t.id)}</b> shield takes the hit.`, "hit");
+          log(`<b>Live.</b> ${Np(t.id)} shield takes the hit.`, "hit");
         } else {
           t.lives = Math.max(0, t.lives - ev.dmg);
-          const el = $("#seat" + t.id);
-          if (el) {
-            el.classList.add("hit");
-            setTimeout(() => el.classList.remove("hit"), 500);
-          }
-          log(`Live. <b>${N(t.id)}</b> ${V(t.id, "loses", "lose")} ${ev.dmg === 2 ? "two lives" : "a life"}.`, "hit");
+          log(`<b>Live.</b> ${N(t.id)} ${V(t.id, "goes", "go")} down and ${V(t.id, "loses", "lose")} ${ev.dmg === 2 ? "two lives" : "a life"}.`, "hit");
           if (ev.killed) {
             t.alive = false;
-            setTimeout(sThud, 320);
-            log(`<b>${N(t.id)}</b> ${V(t.id, "is", "are")} out.`, "hit");
+            setTimeout(sThud, 380);
+            log(`<b>${N(t.id)}</b> ${V(t.id, "stays", "stay")} down. Out for the night.`, "hit");
           }
         }
+        if (ui.reel) ui.reel.stats.live++;
       } else {
         pub.blank = Math.max(0, pub.blank - 1);
-        sClick();
-        sPuff();
-        if (g) fxPuff(mx, my);
-        msg.textContent = "click"; msg.className = "show click";
+        sClick(); sPuff(); stamp("click");
         log(`Click. Blank.`, "safe");
         if (ev.keep) log(`<b>${N(ev.pid)}</b> ${V(ev.pid, "keeps", "keep")} the gun.`, "sys");
+        if (ui.reel) { ui.reel.stats.blank++; if (ev.keep) ui.reel.stats.selfKeep++; }
       }
-      renderState();
-      await delay(1150);
-      msg.className = "";
-      if (tRig) tRig.classList.remove("gasp");
+      stage.update(pub);
+      stage.counts(pub.round, pub.live, pub.blank);
+      renderTags();
+      if (ui.reel) ui.reel.moments.push({ ev, round: pub.round, before, after: snapPlayers(pub) });
+      await firing;
       break;
     }
-    case "end": {
-      await delay(300);
-      break;
-    }
+    case "end": await delay(300); break;
   }
 }
 
 async function animateItem(ev) {
   const p = ui.pub.players.find(q => q.id === ev.pid);
   if (p && ui.st) ui.pub = E.pub(ui.st);
-  else if (p) {  /* trust the event; full state lands after the queue */
-    const meIdx = p.items.indexOf(ev.item);
-    if (meIdx >= 0) p.items.splice(meIdx, 1);
+  else if (p) {
+    const i = p.items.indexOf(ev.item);
+    if (i >= 0) p.items.splice(i, 1);
   }
   const n = `<b>${N(ev.pid)}</b>`;
   const v = (third, second) => V(ev.pid, third, second);
   switch (ev.item) {
     case "peek":
       log(`${n} ${v("steals", "steal")} a look at the next shell.`);
-      if (ev.pid === ui.you && ui.pendingPeek != null) {
-        await showPeek(ui.pendingPeek);
-        ui.pendingPeek = null;
-      }
+      if (isYou(ev.pid) && ui.pendingPeek != null) { await showPeek(ui.pendingPeek); ui.pendingPeek = null; }
       break;
     case "eject": {
-      ui.pub[ev.live ? "live" : "blank"] = Math.max(0, ui.pub[ev.live ? "live" : "blank"] - 1);
-      sTink();
-      if (ui.gunAt != null && ui.layout) {
-        const g = gunXY(ui.gunAt);
-        fxCasing(g.x, g.y, Math.atan2(ui.layout.cy - g.y, ui.layout.cx - g.x) * 180 / Math.PI);
-      }
+      const k = ev.live ? "live" : "blank";
+      ui.pub[k] = Math.max(0, ui.pub[k] - 1);
+      sTink(); stage.eject(ev.live);
       log(`${n} ${v("ejects", "eject")} the next shell. It was ${ev.live ? "<b>live</b>" : "a blank"}.`, ev.live ? "hit" : "safe");
       break;
     }
-    case "spin": sSpin(); log(`${n} ${v("gives", "give")} the cylinder a spin.`); break;
-    case "shield": if (p) p.shield = true; log(`${n} ${v("braces", "brace")} behind a shield.`); break;
+    case "spin": sSpin(); stage.spin(); log(`${n} ${v("gives", "give")} the cylinder a spin.`); break;
+    case "shield": if (p) p.shield = true; log(`${n} ${v("raises", "raise")} a tin shield.`); break;
     case "flask":
       if (p && ev.gained) p.lives = Math.min(ui.pub.rules?.lives ?? 3, p.lives + 1);
-      log(ev.gained
-        ? `${n} ${v("takes", "take")} a pull from the flask. One life back.`
-        : `${n} ${v("drinks", "drink")}. Nothing to gain.`, ev.gained ? "safe" : "");
+      log(ev.gained ? `${n} ${v("takes", "take")} a pull from the flask. One life back.` : `${n} ${v("drinks", "drink")}. Nothing to gain.`, ev.gained ? "safe" : "");
       break;
     case "double": log(`${n} ${v("loads", "load")} a hot round. The next live shell hits twice.`, "hit"); break;
     case "cuffs":
@@ -676,56 +500,49 @@ async function animateItem(ev) {
       break;
   }
   renderState();
-  await delay(600);
+  await delay(650);
 }
 
+const SHELL_SVG = live => live
+  ? `<svg viewBox="0 0 54 110" aria-hidden="true"><rect x="9" y="80" width="36" height="22" rx="3" fill="#b9893a" stroke="#14100d" stroke-width="2"/><path d="M11 80V26a16 16 0 0 1 32 0v54z" fill="#b8321f" stroke="#14100d" stroke-width="2"/><rect x="11" y="44" width="32" height="6" fill="#14100d"/><rect x="11" y="62" width="32" height="6" fill="#14100d"/></svg>`
+  : `<svg viewBox="0 0 54 110" aria-hidden="true"><rect x="9" y="80" width="36" height="22" rx="3" fill="#b9893a" stroke="#14100d" stroke-width="2"/><path d="M11 80V18l8 6 8-6 8 6 8-6v62z" fill="#f2dfb4" stroke="#14100d" stroke-width="2"/><circle cx="27" cy="52" r="7" fill="none" stroke="#14100d" stroke-width="2"/></svg>`;
 function showPeek(live) {
   return new Promise(res => {
-    const r = $("#peekResult");
-    const reveal = () => { r.textContent = live ? "Live" : "Blank"; r.className = "peek-result " + (live ? "live" : "blank"); };
-    const hide = () => { r.textContent = "· · ·"; r.className = "peek-result"; };
+    const box = $("#peekShell"), dlg = $("#peekDlg");
+    const reveal = () => { box.className = "peek-shell " + (live ? "live" : "blank"); box.innerHTML = SHELL_SVG(live) + `<strong>${live ? "Live" : "Blank"}</strong>`; };
+    const hide = () => { box.className = "peek-shell hidden-res"; box.innerHTML = `<strong>· · ·</strong>`; };
+    const hold = $("#peekHold");
     if (store.streamer) {
       hide();
-      const b = $("#peekHold");
-      b.classList.remove("hidden");
-      b.onpointerdown = reveal;
-      b.onpointerup = b.onpointerleave = hide;
-    } else {
-      $("#peekHold").classList.add("hidden");
-      reveal();
-    }
-    modal("#peekModal");
-    $("#peekOk").onclick = () => { modal("#peekModal", false); res(); };
+      hold.classList.remove("hidden");
+      hold.onpointerdown = reveal;
+      hold.onpointerup = hold.onpointerleave = hold.onpointercancel = hide;
+      hold.onkeydown = e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); reveal(); } };
+      hold.onkeyup = hide;
+    } else { hold.classList.add("hidden"); reveal(); }
+    dlg.showModal();
+    $("#peekOk").onclick = () => { dlg.close(); res(); };
+    dlg.oncancel = e => { e.preventDefault(); };
   });
 }
 
 /* ---------------- flow control ---------------- */
 function afterQueue() {
-  if (ui.pendingState) { ui.pub = ui.pendingState; ui.pendingState = null; renderState(); }
-  else if (ui.st) { ui.pub = E.pub(ui.st); renderState(); }
+  if (ui.pendingState) { ui.pub = ui.pendingState; ui.pendingState = null; }
+  else if (ui.st) ui.pub = E.pub(ui.st);
   const pub = ui.pub;
   if (!pub) return;
+  renderState();
 
-  if (pub.over) {
-    if (!ui.counted) { ui.counted = true; store.games++; sWin(); }
-    const w = pub.players.find(p => p.id === pub.winner);
-    if (w) rigOf(w.id)?.classList.add("cheer");
-    $("#overTitle").textContent = !w ? "Nobody" : w.id === ui.you ? "You take the table" : `${w.name} takes the table`;
-    $("#overSub").textContent = w ? `${pub.round} ${pub.round === 1 ? "round" : "rounds"} played.` : "The table is silent.";
-    $("#againBtn").classList.toggle("hidden", ui.mode === "online" && !ui.host);
-    modal("#overModal");
-    return;
-  }
-
+  if (pub.over) { gameOver(); return; }
   const cur = pub.players.find(p => p.id === pub.turn);
   if (!cur) return;
 
   if (ui.mode === "online") {
-    if (ui.you != null && cur.id === ui.you) enableInput();
+    if (!ui.spectating && ui.you != null && cur.id === ui.you) enableInput();
     else waitPrompt(cur);
     return;
   }
-
   if (cur.bot) {
     waitPrompt(cur);
     clearTimeout(ui.botTimer);
@@ -733,37 +550,41 @@ function afterQueue() {
   } else if (ui.mode === "hot" && cur.id !== ui.you) {
     setPrompt("&nbsp;");
     setTargets(false);
-    $("#passName").textContent = cur.name;
-    modal("#passModal");
+    ui.canAct = false; renderHand();
+    stage.setBulbs("steady");
+    $("#passTitle").textContent = cur.name;
+    const dlg = $("#passDlg");
+    dlg.showModal();
+    dlg.oncancel = e => e.preventDefault();
     $("#passOk").onclick = () => {
-      modal("#passModal", false);
+      dlg.close();
       ui.you = cur.id;
-      layoutSeats();
       renderState();
       enableInput();
     };
-  } else {
-    enableInput();
-  }
+  } else enableInput();
 }
-
 function enableInput() {
   ui.canAct = true;
-  setPrompt(`Your move. An item first, or click a name to shoot. Your own counts.`);
+  const me = ui.pub.players.find(p => p.id === ui.you);
+  setPrompt(`<b>Your turn${ui.mode === "hot" && me ? ", " + esc(me.name) : ""}.</b> Pick a target.`,
+    me?.items.length ? "Play an item first if you like. Pulling on yourself keeps the gun on a blank." : "Pulling on yourself keeps the gun on a blank.");
+  $("#stub").classList.remove("yours"); void $("#stub").offsetWidth; $("#stub").classList.add("yours");
+  stage.setBulbs("chase");
   setTargets(true);
   renderHand();
+  const first = $(".tbtn.targetable");
+  if (first && document.activeElement === document.body) first.focus({ preventScroll: true });
 }
 function waitPrompt(cur) {
   ui.canAct = false;
-  setPrompt(cur.bot ? `<b>${cur.name}</b> is thinking.` : `Waiting on <b>${cur.name}</b>.`);
+  stage.setBulbs("steady");
+  setPrompt(cur.bot ? `<b>${esc(cur.name)}</b> is sizing up the rail.` : `Waiting on <b>${esc(cur.name)}</b>.`,
+    ui.spectating ? "You're watching this table." : "");
   setTargets(false);
   renderHand();
 }
-function lockInput() {
-  ui.canAct = false;
-  setTargets(false);
-  renderHand();
-}
+function lockInput() { ui.canAct = false; stage.setBulbs("steady"); setTargets(false); renderHand(); }
 
 function botStep() {
   const st = ui.st;
@@ -771,11 +592,8 @@ function botStep() {
   const cur = st.players[st.turn];
   if (!cur.bot) return;
   const mv = E.botMove(st);
-  const events = mv.a === "item" ? E.useItem(st, cur.id, mv.idx).ev : E.shoot(st, cur.id, mv.tid);
-  enqueue(events);
+  enqueue(mv.a === "item" ? E.useItem(st, cur.id, mv.idx).ev : E.shoot(st, cur.id, mv.tid));
 }
-
-/* ---------------- human actions ---------------- */
 function humanShoot(tid) {
   if (!ui.canAct) return;
   lockInput();
@@ -791,205 +609,294 @@ function humanItem(idx) {
   enqueue(ev);
 }
 
-/* ---------------- game starters ---------------- */
-const LIVES_WORD = ["", "One", "Two", "Three", "Four", "Five"];
-const livesLine = (n, lives) =>
-  `${n} at the table. ${LIVES_WORD[lives] || lives} ${lives === 1 ? "life" : "lives"} each.`;
+/* ---------------- starting a table ---------------- */
+const WORD = ["", "One", "Two", "Three", "Four", "Five"];
+const livesLine = (n, lives) => `${n} targets on the rail. ${WORD[lives] || lives} ${lives === 1 ? "life" : "lives"} each.`;
 
+function enterTable(pub) {
+  ui.pub = pub;
+  ui.gunAt = null;
+  ui.counted = false;
+  $("#ledger").innerHTML = "";
+  $("#tape").classList.remove("open");
+  closeAll();
+  show("#game");
+  stage.setMode("play");
+  stage.setPlayers(pub.players, pub.rules?.lives ?? 3);
+  stage.setActive(null);
+  buildHits();
+  renderState();
+  newReel(pub);
+  $("#hudCode").classList.toggle("hidden", ui.mode !== "online");
+  $("#watchChip").classList.toggle("hidden", !ui.spectating);
+  $("#chatForm").classList.toggle("hidden", ui.mode !== "online");
+  syncDock();
+}
 function startLocal(defs, humans, rules) {
   clearTimeout(ui.botTimer);
-  ui.queue.length = 0;
+  ui.queue.length = 0; ui.anim = false;
   ui.st = E.newGame(defs, rules);
   ui.humans = humans;
   ui.you = humans[0];
-  ui.counted = false;
-  ui.gunSkin = null; ui.gunAt = null;
-  ui.pub = E.pub(ui.st);
-  $("#ledger").innerHTML = "";
-  $("#chatForm").classList.add("hidden");
-  show("#game");
-  buildSeats();
+  ui.spectating = false;
+  enterTable(E.pub(ui.st));
   log(livesLine(defs.length, ui.st.rules.lives), "sys");
   const ev = [];
   E.beginTurn(ui.st, ev);
-  /* setTimeout, not rAF: rAF starves in hidden tabs and would stall the deal */
-  setTimeout(() => { layoutSeats(); enqueue(ev); }, 0);
+  setTimeout(() => enqueue(ev), 0);
 }
 
-/* ---------------- house rules ---------------- */
-const RULE_OPTS = {
-  lives: { label: "Lives", values: [2, 3, 4, 5], names: ["2", "3", "4", "5"] },
-  itemsPerDeal: { label: "Items each round", values: [0, 1, 2, 3], names: ["0", "1", "2", "3"] },
-  heat: { label: "Chamber heat", values: [0, 1, 2], names: ["Calm", "Standard", "Reckless"] }
-};
-let cfgRules = (() => {
-  try { return { lives: 3, itemsPerDeal: 2, heat: 1, ...JSON.parse(localStorage.getItem("lc.rules")) }; }
-  catch { return { lives: 3, itemsPerDeal: 2, heat: 1 }; }
-})();
-function renderRules(sel) {
-  const box = $(sel);
-  if (!box) return;
-  box.innerHTML = "";
-  for (const [k, o] of Object.entries(RULE_OPTS)) {
+/* ---------------- small components ---------------- */
+function stepper(el, { min, max, value, label, onChange }) {
+  el.classList.add("stepper");
+  el.innerHTML = `<button type="button" aria-label="Fewer ${label}">&minus;</button><input type="number" inputmode="numeric" min="${min}" max="${max}" value="${value}" aria-label="${label}"><button type="button" aria-label="More ${label}">+</button>`;
+  const [dn, inp, up] = el.children;
+  const set = v => {
+    v = Math.max(min, Math.min(max, Math.round(+v)));
+    if (Number.isNaN(v)) v = min;
+    inp.value = v; dn.disabled = v <= min; up.disabled = v >= max;
+    onChange?.(v);
+  };
+  dn.onclick = () => set(+inp.value - 1);
+  up.onclick = () => set(+inp.value + 1);
+  inp.onchange = () => set(inp.value);
+  set(value);
+  return { get value() { return +inp.value; }, set, setMax(m) { max = m; inp.max = m; set(inp.value); } };
+}
+function tiles(el, name, options, value, onChange) {
+  el.innerHTML = "";
+  options.forEach(o => {
     const lab = document.createElement("label");
-    lab.textContent = o.label;
-    const seg = document.createElement("div");
-    seg.className = "seg";
-    o.values.forEach((v, i) => {
-      const b = document.createElement("button");
-      b.textContent = o.names[i];
-      b.classList.toggle("sel", cfgRules[k] === v);
-      b.onclick = () => {
-        cfgRules[k] = v;
-        localStorage.setItem("lc.rules", JSON.stringify(cfgRules));
-        renderRules(sel);
-      };
-      seg.appendChild(b);
-    });
-    box.append(lab, seg);
-  }
+    lab.className = "tile";
+    lab.innerHTML = `<input type="radio" name="${name}" value="${o.value}" ${o.value === value ? "checked" : ""} ${o.disabled ? "disabled" : ""}><span>${o.label}${o.sub ? `<small>${o.sub}</small>` : ""}</span>`;
+    lab.querySelector("input").onchange = () => onChange(o.value);
+    el.appendChild(lab);
+  });
 }
-
-$("#mSolo").onclick = () => { renderRules("#soloRules"); modal("#soloCfg"); };
-$("#mHot").onclick = () => { renderHotNames(); renderRules("#hotRules"); modal("#hotCfg"); };
-$("#mOnline").onclick = () => { $("#netErr").textContent = ""; modal("#onlineCfg"); };
-$$("[data-close]").forEach(b => b.onclick = () => b.closest(".overlay").classList.add("hidden"));
-
-/* solo */
-let soloBots = 3;
-$("#soloBots").onclick = e => {
-  const b = e.target.closest("button"); if (!b) return;
-  soloBots = +b.dataset.n;
-  $$("#soloBots button").forEach(x => x.classList.toggle("sel", x === b));
-};
-$("#soloGo").onclick = () => {
-  audio();
-  modal("#soloCfg", false);
-  ui.mode = "solo";
-  const name = $("#soloName").value.trim() || "You";
-  const bots = [...E.BOT_NAMES].sort(() => Math.random() - .5).slice(0, soloBots);
-  startLocal([{ name, look: store.look }, ...bots.map(n => ({ name: n, bot: true }))], [0], cfgRules);
-};
-
-/* hot seat */
-let hotCount = 2, hotBots = 0;
-function renderHotNames() {
-  const box = $("#hotNames"); box.innerHTML = "";
-  for (let i = 0; i < hotCount; i++) {
-    const inp = document.createElement("input");
-    inp.type = "text"; inp.maxLength = 12; inp.spellcheck = false;
-    inp.placeholder = `Player ${i + 1}`;
-    inp.style.marginTop = "6px";
-    box.appendChild(inp);
-  }
+function rulesBlock(el) {
+  const r = store.rules;
+  el.innerHTML = `
+    <div class="field-row"><span class="field-label" id="rLivesL">Lives each</span><div id="rLives" aria-labelledby="rLivesL"></div></div>
+    <div class="field-row"><span class="field-label" id="rItemsL">Items each round</span><div id="rItems" aria-labelledby="rItemsL"></div></div>
+    <fieldset class="choice"><legend>Chamber heat</legend><div class="tiles" id="rHeat"></div></fieldset>`;
+  const save = () => { store.rules = r; };
+  stepper(el.querySelector("#rLives"), { min: 2, max: 5, value: r.lives, label: "lives", onChange: v => { r.lives = v; save(); } });
+  stepper(el.querySelector("#rItems"), { min: 0, max: 3, value: r.itemsPerDeal, label: "items", onChange: v => { r.itemsPerDeal = v; save(); } });
+  tiles(el.querySelector("#rHeat"), "heat", [
+    { value: 0, label: "Calm", sub: "fewer live" }, { value: 1, label: "Standard" }, { value: 2, label: "Reckless", sub: "more live" }
+  ], r.heat, v => { r.heat = v; save(); });
 }
-$("#hotCount").onclick = e => {
-  const b = e.target.closest("button"); if (!b) return;
-  hotCount = +b.dataset.n;
-  $$("#hotCount button").forEach(x => x.classList.toggle("sel", x === b));
-  renderHotNames();
-};
-$("#hotBots").onclick = e => {
-  const b = e.target.closest("button"); if (!b) return;
-  hotBots = +b.dataset.n;
-  $$("#hotBots button").forEach(x => x.classList.toggle("sel", x === b));
-};
-$("#hotGo").onclick = () => {
+function nameField(id, value, label = "Your name at the table") {
+  return `<div class="field"><label for="${id}">${label}</label><div class="name-row">
+    <input id="${id}" maxlength="16" spellcheck="false" autocomplete="nickname" value="${esc(value)}">
+    <button type="button" class="icon-btn" data-dice="${id}" aria-label="Roll a new name" data-tip="Roll a new name"><svg class="i"><use href="#i-dice"/></svg></button></div></div>`;
+}
+document.addEventListener("click", e => {
+  const d = e.target.closest("[data-dice]");
+  if (!d) return;
+  const inp = document.getElementById(d.dataset.dice);
+  const taken = $$("[data-dice]").map(b => document.getElementById(b.dataset.dice)?.value);
+  inp.value = W.carnivalName(taken);
+  inp.dispatchEvent(new Event("input"));
+});
+const nameOrRoll = (v, taken = []) => (v || "").trim().slice(0, 16) || W.carnivalName(taken);
+
+/* ---------------- setup sheets ---------------- */
+function openSetup(kind) {
+  const dlg = $("#setup"), f = $("#setupFields");
+  $("#setupErr").textContent = "";
+  const titles = { solo: "Solo", hot: "Hot seat", online: "Open a table" };
+  $("#setupTitle").textContent = titles[kind];
+  $("#setupGo").textContent = kind === "online" ? "Open the table" : "Deal";
+  if (kind === "solo") {
+    f.innerHTML = nameField("sName", store.name) +
+      `<div class="field-row"><span class="field-label" id="sBotsL">House players</span><div id="sBots" aria-labelledby="sBotsL"></div></div><div class="rules" id="sRules"></div>`;
+    const bots = stepper(f.querySelector("#sBots"), { min: 1, max: 5, value: ls.get("soloBots", 3), label: "house players", onChange: v => ls.set("soloBots", v) });
+    rulesBlock(f.querySelector("#sRules"));
+    dlg.onclose = () => {
+      if (dlg.returnValue !== "go") return;
+      audio();
+      const name = nameOrRoll($("#sName").value);
+      store.name = name;
+      ui.mode = "solo";
+      const house = [...E.BOT_NAMES].filter(n => n !== name).sort(() => Math.random() - .5).slice(0, bots.value);
+      startLocal([{ name, look: store.look }, ...house.map(n => ({ name: n, bot: true }))], [0], store.rules);
+    };
+  } else if (kind === "hot") {
+    f.innerHTML = `<div class="field-row"><span class="field-label" id="hCountL">Players at the device</span><div id="hCount" aria-labelledby="hCountL"></div></div>
+      <div id="hNames"></div>
+      <div class="field-row"><span class="field-label" id="hBotsL">House players</span><div id="hBots" aria-labelledby="hBotsL"></div></div><div class="rules" id="hRules"></div>`;
+    let names = ls.get("hotNames", []);
+    const drawNames = n => {
+      const box = f.querySelector("#hNames");
+      const cur = $$("#hNames input").map(i => i.value);
+      if (cur.length) names = cur;
+      box.innerHTML = Array.from({ length: n }, (_, i) =>
+        nameField("hName" + i, names[i] || (i === 0 ? store.name : W.carnivalName([store.name, ...names])), `Player ${i + 1}`)).join("");
+    };
+    let botsSt;
+    const count = stepper(f.querySelector("#hCount"), { min: 2, max: 6, value: ls.get("hotCount", 2), label: "players",
+      onChange: v => { ls.set("hotCount", v); drawNames(v); botsSt?.setMax(6 - v); } });
+    botsSt = stepper(f.querySelector("#hBots"), { min: 0, max: 6 - count.value, value: Math.min(ls.get("hotBots", 0), 6 - count.value), label: "house players", onChange: v => ls.set("hotBots", v) });
+    rulesBlock(f.querySelector("#hRules"));
+    dlg.onclose = () => {
+      if (dlg.returnValue !== "go") return;
+      audio();
+      const taken = [];
+      const ns = $$("#hNames input").map(i => { const n = nameOrRoll(i.value, taken); taken.push(n); return n; });
+      ls.set("hotNames", ns);
+      store.name = ns[0];
+      ui.mode = "hot";
+      const house = [...E.BOT_NAMES].filter(n => !ns.includes(n)).sort(() => Math.random() - .5).slice(0, botsSt.value);
+      startLocal([...ns.map((n, i) => ({ name: n, look: i === 0 ? store.look : null })), ...house.map(n => ({ name: n, bot: true }))],
+        ns.map((_, i) => i), store.rules);
+    };
+  } else {
+    f.innerHTML = nameField("oName", store.name) + `<p class="sheet-lede">You get a four-letter code and an invite link. Friends tap the link and they're in.</p>`;
+    dlg.onclose = () => {
+      if (dlg.returnValue !== "go") return;
+      audio();
+      const name = nameOrRoll($("#oName").value);
+      store.name = name;
+      ui.mode = "online"; ui.host = true;
+      connect(() => ui.ws.send(JSON.stringify({ t: "create", name, look: store.look })));
+    };
+  }
+  dlg.returnValue = "";
+  dlg.showModal();
+  dlg.querySelector("input")?.focus();
+}
+$("#mSolo").onclick = () => openSetup("solo");
+$("#mHot").onclick = () => openSetup("hot");
+$("#mOnline").onclick = () => openSetup("online");
+
+/* ---------------- joining: code on the board, or a link ---------------- */
+const CODE_RE = /^[A-HJ-NP-Z2-9]{4}$/;
+function openJoin(code) {
+  const dlg = $("#joinDlg");
+  $("#joinCodeShow").textContent = code;
+  $("#joinName").value = store.name;
+  $("#joinErr").textContent = "";
+  $("#joinSpec").checked = false;
+  dlg.returnValue = "";
+  dlg.dataset.code = code;
+  dlg.showModal();
+  $("#joinGo").focus();
+}
+$("#joinDice").onclick = () => { $("#joinName").value = W.carnivalName([$("#joinName").value]); };
+$("#joinDlg").addEventListener("close", () => {
+  const dlg = $("#joinDlg");
+  if (dlg.returnValue !== "go") { if (location.pathname !== "/") history.replaceState(null, "", "/"); return; }
   audio();
-  modal("#hotCfg", false);
-  ui.mode = "hot";
-  const names = $$("#hotNames input").map((i, idx) => i.value.trim() || `Player ${idx + 1}`);
-  const bots = [...E.BOT_NAMES].sort(() => Math.random() - .5).slice(0, hotBots);
-  startLocal(
-    [...names.map((n, i) => ({ name: n, look: i === 0 ? store.look : null })),
-     ...bots.map(n => ({ name: n, bot: true }))],
-    names.map((_, i) => i),
-    cfgRules
-  );
+  const name = nameOrRoll($("#joinName").value);
+  store.name = name;
+  ui.mode = "online"; ui.host = false;
+  const code = dlg.dataset.code;
+  connect(() => ui.ws.send(JSON.stringify({ t: "join", code, name, look: store.look, spectate: $("#joinSpec").checked })));
+});
+$("#quickCode").addEventListener("input", e => {
+  const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  e.target.value = v;
+  $("#quickErr").textContent = "";
+});
+$("#quickJoin").onsubmit = e => {
+  e.preventDefault();
+  const code = $("#quickCode").value.toUpperCase();
+  if (!CODE_RE.test(code)) {
+    $("#quickErr").textContent = code.length !== 4 ? "Codes are four characters, like KQ7R." : "That code has a letter tables never use (I, O, 0 or 1).";
+    $("#quickCode").focus();
+    return;
+  }
+  openJoin(code);
 };
 
 /* ---------------- online ---------------- */
-let lobbyBots = 2;
+let lobbyBots = null;
+function inviteUrl(code) { return `${location.origin}/${code}`; }
 function connect(onOpen) {
   if (ui.ws && ui.ws.readyState === WebSocket.OPEN) { onOpen(); return; }
   const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host);
   ui.ws = ws;
   ws.onopen = onOpen;
-  ws.onclose = () => { if (ui.mode === "online") { ui.mode = null; show("#menu"); } };
+  ws.onerror = () => {
+    const msg = "Couldn't reach the server. Check your connection and try again.";
+    $("#quickErr").textContent = msg;
+    $("#joinErr").textContent = msg;
+  };
+  ws.onclose = () => {
+    if (ui.mode === "online") {
+      ui.mode = null; ui.code = null;
+      toMenu();
+      $("#quickErr").textContent = "The connection to the table dropped.";
+    }
+  };
   ws.onmessage = raw => {
-    const m = JSON.parse(raw.data);
+    let m; try { m = JSON.parse(raw.data); } catch { return; }
     switch (m.t) {
-      case "roster": {
-        $("#lobbyCode").textContent = m.code;
-        $("#lobbyRoster").innerHTML = m.players
-          .map(p => `<div class="chip${p.host ? " host" : ""}">${p.name}</div>`).join("");
-        $("#lobbySpec").textContent = m.spectators ? `${m.spectators} watching` : "";
-        const meHost = m.players.length && m.players[0].host && ui.host;
-        $("#lobbyStart").classList.toggle("hidden", !ui.host);
-        $("#lobbyBots").classList.toggle("hidden", !ui.host);
-        $("#lobbyRules").classList.toggle("hidden", !ui.host);
-        if (ui.host && !$("#lobbyRules").childElementCount) renderRules("#lobbyRules");
-        if (!m.started && !$("#game").classList.contains("hidden")) show("#lobby");
-        break;
-      }
+      case "roster": onRoster(m); break;
       case "begin": {
         clearTimeout(ui.botTimer);
-        ui.st = null;                 /* server is authoritative from here */
+        ui.st = null;
         ui.you = m.you;
         ui.spectating = m.you == null;
-        ui.pub = m.state;
-        ui.counted = false;
-        ui.gunSkin = null; ui.gunAt = null;
         ui.queue.length = 0; ui.anim = false;
-        modal("#overModal", false);
-        $("#ledger").innerHTML = "";
-        $("#chatForm").classList.remove("hidden");
-        show("#game");
-        buildSeats();
+        enterTable(m.state);
         log(livesLine(m.state.players.length, m.state.rules?.lives ?? 3), "sys");
-        if (ui.spectating) log("You are watching this table.", "sys");
-        setTimeout(layoutSeats, 0);
+        if (ui.spectating) log("You're watching this table.", "sys");
+        if (m.state.turn != null) { stage.setActive(m.state.turn); ui.gunAt = m.state.turn;
+          stage.giveGun(m.state.turn, lookOf(m.state.players.find(p => p.id === m.state.turn)), false); }
+        if (m.state.round) stage.counts(m.state.round, m.state.live, m.state.blank);
         break;
       }
-      case "ev": {
-        ui.pendingState = m.state;
-        enqueue(m.events);
-        break;
-      }
+      case "ev": ui.pendingState = m.state; enqueue(m.events); break;
       case "peek": ui.pendingPeek = m.live; break;
-      case "note": log(m.text, "sys"); break;
-      case "chat": log(`<b>${m.name}</b> ${m.text}`, "talk"); break;
-      case "err": $("#netErr").textContent = m.msg; break;
+      case "note": log(esc(m.text), "sys"); break;
+      case "chat": log(`<b>${esc(m.name)}</b> ${esc(m.text)}`, "talk"); break;
+      case "err":
+        $("#joinErr").textContent = m.msg; $("#quickErr").textContent = m.msg;
+        if (!$("#joinDlg").open && $("#joinDlg").dataset.code) openJoin($("#joinDlg").dataset.code);
+        $("#joinErr").textContent = m.msg;
+        break;
     }
   };
 }
-$("#netCreate").onclick = () => {
-  audio(); ui.mode = "online"; ui.host = true;
-  connect(() => {
-    ui.ws.send(JSON.stringify({ t: "create", name: $("#netName").value.trim() || "Guest", look: store.look }));
-    modal("#onlineCfg", false);
+function onRoster(m) {
+  ui.code = m.code;
+  ui.roster = m.players;
+  history.replaceState(null, "", "/" + m.code);
+  $("#lobbyCode").textContent = m.code;
+  $("#hudCodeVal").textContent = m.code;
+  $("#lobbyRoster").innerHTML = m.players.map(p => `<li class="${p.host ? "host" : ""}">${esc(p.name)}</li>`).join("");
+  $("#lobbySpec").textContent = m.spectators ? `${m.spectators} watching` : "";
+  const meHost = m.players.some(p => p.host && p.you);
+  ui.host = meHost || (ui.host && !m.players.some(p => p.host && !p.you));
+  $("#lobbyHost").classList.toggle("hidden", !ui.host);
+  $("#lobbyStart").classList.toggle("hidden", !ui.host);
+  $("#lobbyWait").classList.toggle("hidden", ui.host);
+  if (ui.host && !$("#lobbyRules").childElementCount) rulesBlock($("#lobbyRules"));
+  if (ui.host && !lobbyBots) lobbyBots = stepper($("#lobbyBots"), { min: 0, max: 5, value: ls.get("lobbyBots", 2), label: "house players", onChange: v => ls.set("lobbyBots", v) });
+  if (!m.started) {
+    closeAll();
     show("#lobby");
-  });
+    /* seated players stand on the rail while the lobby fills */
+    stage.setMode("attract");
+    stage.setActive(null);
+    stage.setPlayers(m.players.map((p, i) => ({ id: i, name: p.name, look: p.look, lives: 3, alive: true })), 3);
+    ui.pub = null;
+    $("#hit").innerHTML = "";
+  }
+  syncDock();
+}
+$("#lobbyStart").onclick = () => ui.ws?.send(JSON.stringify({ t: "start", bots: lobbyBots?.value ?? 2, rules: store.rules }));
+$("#lobbyLeave").onclick = () => leaveTable();
+$("#copyLink").onclick = async () => {
+  const url = inviteUrl(ui.code);
+  try {
+    if (navigator.share && matchMedia("(pointer: coarse)").matches) await navigator.share({ title: "Last Chamber", text: "Take a seat at my table", url });
+    else { await navigator.clipboard.writeText(url); flashLabel($("#copyLink span"), "Link copied"); }
+  } catch { flashLabel($("#copyLink span"), url); }
 };
-$("#netJoin").onclick = () => {
-  audio(); ui.mode = "online"; ui.host = false;
-  const code = $("#netCode").value.trim().toUpperCase();
-  if (code.length !== 4) { $("#netErr").textContent = "Codes are four characters."; return; }
-  connect(() => {
-    ui.ws.send(JSON.stringify({
-      t: "join", code,
-      name: $("#netName").value.trim() || "Guest",
-      look: store.look,
-      spectate: $("#netSpec").checked
-    }));
-    modal("#onlineCfg", false);
-    show("#lobby");
-  });
-};
-$("#botMinus").onclick = () => { lobbyBots = Math.max(0, lobbyBots - 1); $("#botCount").textContent = lobbyBots; };
-$("#botPlus").onclick = () => { lobbyBots = Math.min(5, lobbyBots + 1); $("#botCount").textContent = lobbyBots; };
-$("#lobbyStart").onclick = () => ui.ws?.send(JSON.stringify({ t: "start", bots: lobbyBots, rules: cfgRules }));
-$("#lobbyLeave").onclick = () => { ui.ws?.send(JSON.stringify({ t: "leave" })); ui.mode = null; show("#menu"); };
+function flashLabel(el, text) { const old = el.textContent; el.textContent = text; setTimeout(() => { el.textContent = old; }, 2200); }
 $("#chatForm").onsubmit = e => {
   e.preventDefault();
   const text = $("#chatIn").value.trim();
@@ -997,79 +904,286 @@ $("#chatForm").onsubmit = e => {
   $("#chatIn").value = "";
 };
 
-/* ---------------- end of game ---------------- */
+/* big code card and the streamer dock */
+function drawQr(canvas, text) {
+  const q = qrcode(0, "M"); q.addData(text); q.make();
+  const n = q.getModuleCount(), c = canvas.getContext("2d"), pad = 2, sz = canvas.width / (n + pad * 2);
+  c.fillStyle = "#f2dfb4"; c.fillRect(0, 0, canvas.width, canvas.height);
+  c.fillStyle = "#14100d";
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++)
+    if (q.isDark(y, x)) c.fillRect(Math.floor((x + pad) * sz), Math.floor((y + pad) * sz), Math.ceil(sz), Math.ceil(sz));
+}
+function openCodeCard() {
+  if (!ui.code) return;
+  $("#codeBig").textContent = ui.code;
+  $("#codeUrl").textContent = inviteUrl(ui.code).replace(/^https?:\/\//, "");
+  drawQr($("#codeQr"), inviteUrl(ui.code));
+  $("#codeDlg").showModal();
+}
+$("#bigCodeBtn").onclick = openCodeCard;
+$("#hudCode").onclick = openCodeCard;
+$("#codeClose").onclick = () => $("#codeDlg").close();
+function syncDock() {
+  const on = store.streamer && ui.mode === "online" && !!ui.code;
+  $("#codeDock").classList.toggle("hidden", !on);
+  if (on) { $("#codeDockVal").textContent = ui.code; $("#codeDockUrl").textContent = inviteUrl(ui.code).replace(/^https?:\/\//, ""); }
+}
+
+/* ---------------- end of the night ---------------- */
+function gameOver() {
+  if (!ui.counted) { ui.counted = true; store.games++; sWin(); }
+  const pub = ui.pub;
+  const w = pub.players.find(p => p.id === pub.winner);
+  stage.cheer(w?.id);
+  setTargets(false);
+  setPrompt(!w ? "Nobody's left standing." : isYou(w.id) ? "<b>You take the prize.</b>" : `<b>${esc(w.name)}</b> takes the prize.`);
+  $("#overTitle").textContent = !w ? "Nobody takes the prize" : isYou(w.id) ? "You take the prize" : `${w.name} takes the prize`;
+  const s = ui.reel?.stats || { live: 0, blank: 0, selfKeep: 0 };
+  $("#overFacts").innerHTML = [
+    ["Rounds", pub.round], ["Live rounds fired", s.live], ["Blanks survived", s.blank], ["Kept the gun on a blank", s.selfKeep]
+  ].map(([k, v]) => `<li><span>${k}</span><span>${v}</span></li>`).join("");
+  const canRec = stage.kind === "3d" && typeof MediaRecorder !== "undefined" && !!stage.canvas.captureStream;
+  $("#reelSave").disabled = !canRec || !ui.reel?.moments.length;
+  $("#reelPlay").disabled = !ui.reel?.moments.length;
+  $("#reelNote").textContent = canRec ? "" : "Saving clips isn't available on this device. The replay still plays.";
+  $("#againBtn").classList.toggle("hidden", ui.mode === "online" && !ui.host);
+  setTimeout(() => { if (ui.pub?.over && !document.body.classList.contains("replaying")) $("#overDlg").showModal(); }, reduced() ? 300 : 1600);
+}
 $("#againBtn").onclick = () => {
-  modal("#overModal", false);
+  $("#overDlg").close();
   if (ui.mode === "online") { ui.ws?.send(JSON.stringify({ t: "again" })); return; }
   const defs = ui.st.players.map(p => ({ name: p.name, bot: p.bot, look: p.look }));
-  startLocal(defs, ui.humans);
+  startLocal(defs, ui.humans, store.rules);
 };
-$("#overMenu").onclick = () => {
-  modal("#overModal", false);
-  if (ui.mode === "online") ui.ws?.send(JSON.stringify({ t: "leave" }));
-  ui.mode = null;
-  show("#menu");
-};
+$("#overMenu").onclick = () => { $("#overDlg").close(); leaveTable(); };
+$("#overDlg").addEventListener("cancel", e => e.preventDefault());
 
-/* ---------------- settings ---------------- */
-function renderSettings() {
-  const games = store.games;
-  $$("#feltSeg button").forEach(b => {
-    const need = UNLOCKS.felt[b.dataset.v];
-    const locked = games < need;
-    b.classList.toggle("locked", locked);
-    b.classList.toggle("sel", store.felt === b.dataset.v);
-    b.textContent = b.dataset.v[0].toUpperCase() + b.dataset.v.slice(1) + (locked ? ` (${need} games)` : "");
-  });
-  $("#streamerChk").checked = store.streamer;
-  $("#playedLine").textContent = `Games finished on this device: ${games}. More felts unlock as you play.`;
+/* ---------------- the reel ----------------
+   Runs the night back along the gun's track: the best pulls, in order,
+   with the table as it stood. Recording composites the booth with a
+   caption strip into a WebM. */
+function pickMoments(all) {
+  if (all.length <= 8) return all;
+  const keyIdx = new Set(all.map((m, i) => (m.ev.killed || m.ev.keep) ? i : -1).filter(i => i >= 0));
+  for (let i = all.length - 1; keyIdx.size < 8 && i >= 0; i--) keyIdx.add(i);
+  return all.filter((_, i) => keyIdx.has(i)).slice(-8);
 }
-function applyCosmetics() {
-  document.body.dataset.felt = store.felt;
-}
-$("#settingsBtn").onclick = () => { renderSettings(); modal("#settingsModal"); };
-$("#feltSeg").onclick = e => {
-  const b = e.target.closest("button");
-  if (!b || b.classList.contains("locked")) return;
-  store.felt = b.dataset.v; applyCosmetics(); renderSettings();
-};
-$("#streamerChk").onchange = e => { store.streamer = e.target.checked; };
-
-/* ---------------- wardrobe ---------------- */
-const FIT_SEGS = [
-  { key: "skin", seg: "#fitSkin", swatch: SKINS },
-  { key: "outfit", seg: "#fitOutfit", labels: OUTFITS },
-  { key: "color", seg: "#fitColor", swatch: COLORS },
-  { key: "hat", seg: "#fitHat", labels: HATS },
-  { key: "gun", seg: "#fitGunSeg", labels: GUNS },
-  { key: "finish", seg: "#fitFinish", labels: FINISHES }
-];
-function renderWardrobe() {
-  const look = store.look;
-  for (const f of FIT_SEGS) {
-    const box = $(f.seg); box.innerHTML = "";
-    const opts = f.swatch || f.labels;
-    opts.forEach((opt, i) => {
-      const b = document.createElement("button");
-      if (f.swatch) b.innerHTML = `<span style="background:${opt}"></span>`;
-      else b.textContent = opt;
-      b.classList.toggle("sel", look[f.key] === i);
-      b.onclick = () => {
-        const next = store.look;
-        next[f.key] = i;
-        store.look = next;
-        renderWardrobe();
-      };
-      box.appendChild(b);
-    });
+let replaying = false;
+async function playReel(record) {
+  if (replaying || !ui.reel?.moments.length) return;
+  replaying = true;
+  audio();
+  $("#overDlg").close();
+  document.body.classList.add("replaying");
+  const banner = document.createElement("div");
+  banner.className = "replay-tape";
+  banner.innerHTML = `<span class="rec" aria-hidden="true"></span><span class="cap">Replay</span>`;
+  document.body.appendChild(banner);
+  const cap = banner.querySelector(".cap");
+  let rec = null;
+  if (record) rec = startRecording(() => cap.textContent);
+  const R = ui.reel, moments = pickMoments(R.moments);
+  const nm = id => R.start.find(p => p.id === id)?.name || "?";
+  stage.setPlayers(R.start, R.cap);
+  stage.setActive(null);
+  await delay(600);
+  for (const m of moments) {
+    stage.update({ players: m.before, rules: { lives: R.cap } });
+    stage.setActive(m.ev.pid);
+    await stage.giveGun(m.ev.pid, lookOf(R.start.find(p => p.id === m.ev.pid)), true);
+    cap.textContent = `Round ${m.round}: ${nm(m.ev.pid)} ${m.ev.pid === m.ev.tid ? "turns it inward" : "draws on " + nm(m.ev.tid)}`;
+    announce(cap.textContent);
+    sCock(); sHeart();
+    await stage.aim(m.ev.pid, m.ev.tid);
+    const f = stage.fire(m.ev);
+    if (m.ev.live) { sBang(); flash(); stamp("bang"); if (!m.ev.shielded) setTimeout(sClang, 60); if (m.ev.killed) setTimeout(sThud, 380); }
+    else { sClick(); sPuff(); stamp("click"); }
+    stage.update({ players: m.after, rules: { lives: R.cap } });
+    await f;
   }
-  $("#fitPreview").innerHTML = rigSVG(look);
-  $("#fitGun").innerHTML = gunSVG(look);
+  const w = ui.pub.players.find(p => p.id === ui.pub.winner);
+  cap.textContent = w ? `${w.name} takes the prize` : "Nobody takes the prize";
+  stage.update(ui.pub);
+  if (w) stage.cheer(w.id);
+  await delay(1800);
+  if (rec) await rec.stop();
+  banner.remove();
+  document.body.classList.remove("replaying");
+  replaying = false;
+  if (ui.pub?.over) $("#overDlg").showModal();
 }
-$("#wardrobeBtn").onclick = () => { renderWardrobe(); modal("#lookModal"); };
+function startRecording(caption) {
+  const W_ = 1280, H_ = 720;
+  const cv = document.createElement("canvas"); cv.width = W_; cv.height = H_;
+  const c = cv.getContext("2d");
+  stage.setAfterRender(src => {
+    const sw = src.width, sh = src.height, s = Math.max(W_ / sw, H_ / sh);
+    c.drawImage(src, (W_ - sw * s) / 2, (H_ - sh * s) / 2, sw * s, sh * s);
+    c.fillStyle = "#f2dfb4"; c.fillRect(0, H_ - 64, W_, 64);
+    c.fillStyle = "#14100d"; c.font = '30px "Rye", Georgia, serif'; c.textBaseline = "middle";
+    c.fillText(caption(), 28, H_ - 31);
+    c.textAlign = "right"; c.font = '600 22px "Barlow Semi Condensed", sans-serif';
+    c.fillText("LAST CHAMBER", W_ - 28, H_ - 30); c.textAlign = "left";
+  });
+  const stream = cv.captureStream(30);
+  if (recDest) recDest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+  const type = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"].find(t => MediaRecorder.isTypeSupported?.(t)) || "";
+  const mr = new MediaRecorder(stream, type ? { mimeType: type, videoBitsPerSecond: 6e6 } : undefined);
+  const chunks = [];
+  mr.ondataavailable = e => e.data.size && chunks.push(e.data);
+  mr.start(250);
+  return {
+    stop: () => new Promise(res => {
+      mr.onstop = () => {
+        stage.setAfterRender(null);
+        const blob = new Blob(chunks, { type: "video/webm" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `last-chamber-${new Date().toISOString().slice(0, 10)}.webm`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+        $("#reelNote").textContent = "Clip saved to your downloads.";
+        res();
+      };
+      mr.stop();
+    })
+  };
+}
+$("#reelPlay").onclick = () => playReel(false);
+$("#reelSave").onclick = () => playReel(true);
 
-applyCosmetics();
+/* ---------------- leaving, the menu, the table menu ---------------- */
+function attract() {
+  stage.setMode("attract");
+  stage.setActive(null);
+  stage.setBulbs("steady");
+  stage.setPlayers(["Viper", "Duchess", "Lucky", "Preacher"].map((n, i) => ({ id: i, name: n, look: null, lives: 3, alive: true })), 3);
+  stage.giveGun(null, W.seededLook("house"), false);
+}
+function toMenu() {
+  clearTimeout(ui.botTimer);
+  ui.queue.length = 0; ui.anim = false;
+  ui.pub = null; ui.st = null;
+  closeAll();
+  $("#hit").innerHTML = "";
+  show("#menu");
+  history.replaceState(null, "", "/");
+  attract();
+  syncDock();
+}
+function leaveTable() {
+  if (ui.mode === "online") { ui.ws?.send(JSON.stringify({ t: "leave" })); }
+  ui.mode = null; ui.code = null; lobbyBots = null;
+  $("#lobbyRules").innerHTML = "";
+  toMenu();
+}
+$("#hudMenu").onclick = () => { const d = $("#tableMenu"); d.returnValue = ""; d.showModal(); };
+$("#tableMenu").addEventListener("close", () => {
+  const v = $("#tableMenu").returnValue;
+  if (v === "leave") leaveTable();
+  else if (v === "office") openOffice();
+});
 
-/* Installable on phones; cached shell keeps solo and hot seat playable offline. */
-if ("serviceWorker" in navigator)
-  navigator.serviceWorker.register("/sw.js").catch(() => {});
+/* ---------------- paint shop ---------------- */
+function openPaint() {
+  const dlg = $("#paintDlg");
+  const look = store.look;
+  const preview = () => stage.setPlayers([{ id: 0, name: store.name, look: store.look, lives: 3, alive: true }], 3);
+  const fromMenu = !ui.pub;
+  if (fromMenu) { stage.setMode("preview"); preview(); stage.giveGun(0, look, false); $("#menu").classList.add("hidden"); }
+  $("#paintName").value = store.name;
+  $("#paintName").oninput = e => { const v = e.target.value.trim(); if (v) { store.name = v; preview(); } };
+  $("#paintDice").onclick = () => { $("#paintName").value = W.carnivalName([store.name]); store.name = $("#paintName").value; preview(); };
+  const set = (k, v) => { const l = store.look; l[k] = v; store.look = l; preview(); stage.giveGun(0, store.look, false); };
+  tiles($("#pFig"), "fig", W.FIGURES.map((f, i) => ({ value: i, label: f.name })), look.fig, v => set("fig", v));
+  for (const [k, el] of [["body", "#pBody"], ["trim", "#pTrim"], ["plate", "#pPlate"]]) {
+    const box = $(el); box.innerHTML = "";
+    /* columns are the five inks, rows deep / base / light */
+    for (let tint = 0; tint < 3; tint++) for (let ink = 0; ink < 5; ink++) {
+      const i = ink * 3 + tint;
+      const lab = document.createElement("label");
+      lab.className = "pot";
+      const hex = W.paint(i);
+      lab.innerHTML = `<input type="radio" name="${k}" value="${i}" ${look[k] === i ? "checked" : ""} aria-label="${W.paintName(i)}"><span style="--c:${hex};--check:${W.isLight(hex) ? "#14100d" : "#f2dfb4"}"></span>`;
+      lab.dataset.tip = W.paintName(i);
+      lab.querySelector("input").onchange = () => set(k, i);
+      box.appendChild(lab);
+    }
+  }
+  tiles($("#pGun"), "gun", W.GUNS.map((g, i) => ({ value: i, label: g })), look.gun, v => set("gun", v));
+  tiles($("#pFinish"), "finish", W.FINISHES.map((g, i) => ({ value: i, label: g })), look.finish, v => set("finish", v));
+  dlg.onclose = () => { if (fromMenu) { attract(); $("#menu").classList.remove("hidden"); } syncInset(); };
+  dlg.showModal();
+  requestAnimationFrame(paintInset);
+}
+$("#paintBtn").onclick = openPaint;
+
+/* ---------------- back office ---------------- */
+function openOffice() {
+  const g = store.games;
+  tiles($("#oAwning"), "awning", W.AWNINGS.map(a => ({
+    value: a.id, label: a.name, disabled: g < a.need,
+    sub: g < a.need ? `after ${a.need} games` : ""
+  })), store.awning, v => { store.awning = v; stage.setAwning(W.AWNINGS.find(a => a.id === v).ink); });
+  $("#oStreamer").checked = store.streamer;
+  $("#oStreamer").onchange = e => { store.streamer = e.target.checked; document.body.classList.toggle("stream", store.streamer); syncDock(); };
+  tiles($("#oMotion"), "motion", [
+    { value: "system", label: "Follow device" }, { value: "full", label: "Full" }, { value: "reduce", label: "Reduced" }
+  ], store.motion, v => { store.motion = v; applyMotion(); });
+  const vol = $("#oVolume");
+  vol.value = store.volume; vol.style.setProperty("--v", vol.value + "%");
+  vol.oninput = () => {
+    store.volume = +vol.value; vol.style.setProperty("--v", vol.value + "%");
+    if (master) master.gain.value = store.volume / 100;
+  };
+  vol.onchange = () => { audio(); sClick(); };
+  $("#oPlayed").textContent = `Games finished on this device: ${g}. New booth canvas unlocks as you play.`;
+  $("#officeDlg").showModal();
+}
+$("#officeBtn").onclick = openOffice;
+
+/* ---------------- tooltips ---------------- */
+{
+  const tip = $("#tip");
+  let cur = null;
+  const showTip = el => {
+    const text = el.dataset.tip; if (!text) return;
+    cur = el;
+    tip.textContent = text; tip.hidden = false;
+    const r = el.getBoundingClientRect(), t = tip.getBoundingClientRect();
+    let x = r.left + r.width / 2 - t.width / 2;
+    x = Math.max(8, Math.min(innerWidth - t.width - 8, x));
+    let y = r.top - t.height - 10, below = false;
+    if (y < 8) { y = r.bottom + 10; below = true; }
+    tip.classList.toggle("below", below);
+    tip.style.left = x + "px"; tip.style.top = y + "px";
+    tip.style.setProperty("--ax", (r.left + r.width / 2 - x) + "px");
+  };
+  const hideTip = () => { cur = null; tip.hidden = true; };
+  document.addEventListener("pointerover", e => { const el = e.target.closest("[data-tip]"); if (el && el !== cur && e.pointerType === "mouse") showTip(el); else if (!el && cur) hideTip(); });
+  document.addEventListener("focusin", e => { const el = e.target.closest("[data-tip]"); if (el && e.target.matches(":focus-visible")) showTip(el); });
+  document.addEventListener("focusout", hideTip);
+  document.addEventListener("keydown", e => { if (e.key === "Escape") hideTip(); });
+  document.addEventListener("scroll", hideTip, true);
+}
+
+/* keyboard: 1-7 play items, arrow keys move between targets */
+document.addEventListener("keydown", e => {
+  if (!ui.canAct || e.target.closest("input, dialog[open]")) return;
+  if (/^[1-7]$/.test(e.key)) { const b = $$("#hand .item")[+e.key - 1]; if (b) { e.preventDefault(); b.click(); } }
+  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+    const list = $$(".tbtn.targetable"); if (!list.length) return;
+    const i = list.indexOf(document.activeElement);
+    const n = list[(i + (e.key === "ArrowRight" ? 1 : -1) + list.length) % list.length];
+    e.preventDefault(); n.focus();
+  }
+});
+
+/* ---------------- boot ---------------- */
+await mountBooth();
+attract();
+syncInset();
+const m = location.pathname.match(/^\/([A-Za-z0-9]{4})\/?$/);
+if (m && CODE_RE.test(m[1].toUpperCase())) openJoin(m[1].toUpperCase());
+
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});

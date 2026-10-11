@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import * as E from "../shared/engine.mjs";
+import { carnivalName, LOOK_RANGES } from "../public/js/world.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PUBLIC = path.join(ROOT, "public");
@@ -24,13 +25,16 @@ const MIME = {
   ".webmanifest": "application/manifest+json",
   ".json": "application/json",
   ".png": "image/png",
-  ".ico": "image/x-icon"
+  ".ico": "image/x-icon",
+  ".woff2": "font/woff2",
+  ".glb": "model/gltf-binary"
 };
 
 const server = http.createServer((req, res) => {
   const url = decodeURIComponent((req.url || "/").split("?")[0]);
   let file;
-  if (url === "/" || url === "/index.html") file = path.join(PUBLIC, "index.html");
+  /* invite links: /KQ7R opens the game with the join sheet ready */
+  if (url === "/" || url === "/index.html" || /^\/[A-Za-z0-9]{4}\/?$/.test(url)) file = path.join(PUBLIC, "index.html");
   else if (url.startsWith("/shared/")) file = path.join(ROOT, url);
   else file = path.join(PUBLIC, url);
   file = path.normalize(file);
@@ -74,10 +78,11 @@ const cast = (room, msg) => { for (const ws of room.clients) send(ws, msg); };
 function roster(room) {
   const seats = [...room.clients].filter(w => w.lc.role === "seat");
   const specs = [...room.clients].filter(w => w.lc.role === "spec").length;
-  cast(room, {
+  /* each client hears which seat is theirs */
+  for (const ws of room.clients) send(ws, {
     t: "roster",
     code: room.code,
-    players: seats.map(w => ({ name: w.lc.name, host: w.lc.host || false })),
+    players: seats.map(w => ({ name: w.lc.name, look: w.lc.look, host: w.lc.host || false, you: w === ws })),
     spectators: specs,
     started: !!room.st
   });
@@ -166,7 +171,7 @@ wss.on("connection", ws => {
       case "create": {
         if (room) leaveRoom(ws);
         const r = makeRoom();
-        ws.lc = { name: clean(m.name), look: cleanLook(m.look), role: "seat", pid: null, host: true };
+        ws.lc = { name: seatName(m.name, []), look: cleanLook(m.look), role: "seat", pid: null, host: true };
         ws.lcRoom = r;
         r.clients.add(ws);
         roster(r);
@@ -178,7 +183,8 @@ wss.on("connection", ws => {
         const seated = [...r.clients].filter(w => w.lc.role === "seat").length;
         const wantSpec = m.spectate || r.st || seated >= 6;
         if (room) leaveRoom(ws);
-        ws.lc = { name: clean(m.name), look: cleanLook(m.look), role: wantSpec ? "spec" : "seat", pid: null, host: false };
+        const taken = [...r.clients].map(w => w.lc.name);
+        ws.lc = { name: seatName(m.name, taken), look: cleanLook(m.look), role: wantSpec ? "spec" : "seat", pid: null, host: false };
         ws.lcRoom = r;
         r.clients.add(ws);
         if (r.st) send(ws, { t: "begin", you: null, state: E.pub(r.st) });
@@ -216,7 +222,7 @@ wss.on("connection", ws => {
       }
       case "chat": {
         if (!room) return;
-        const text = clean(m.text, 120);
+        const text = clean(m.text, 120, "");
         if (text) cast(room, { t: "chat", name: ws.lc.name, text });
         break;
       }
@@ -227,8 +233,16 @@ wss.on("connection", ws => {
   ws.on("close", () => leaveRoom(ws));
 });
 
-function clean(s, max = 14) {
-  return String(s || "").replace(/[<>&]/g, "").trim().slice(0, max) || "Guest";
+function clean(s, max = 16, empty = "") {
+  return String(s || "").replace(/[<>&]/g, "").trim().slice(0, max) || empty;
+}
+/* Nobody sits down as "Guest": an empty or duplicate name gets a carnival one. */
+function seatName(raw, taken) {
+  const n = clean(raw);
+  const lower = taken.map(t => String(t).toLowerCase());
+  if (n && !lower.includes(n.toLowerCase())) return n;
+  if (n) for (let i = 2; i < 9; i++) { const c = (n.slice(0, 13) + " " + i); if (!lower.includes(c.toLowerCase())) return c; }
+  return carnivalName(taken);
 }
 
 /* House rules are host-chosen but server-clamped. */
@@ -245,7 +259,6 @@ function cleanRules(raw) {
 }
 
 /* Appearance is client-chosen but server-clamped: integer indexes only. */
-const LOOK_RANGES = { skin: 5, outfit: 4, color: 6, hat: 6, gun: 3, finish: 3 };
 function cleanLook(raw) {
   if (!raw || typeof raw !== "object") return null;
   const look = {};

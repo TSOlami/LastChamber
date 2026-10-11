@@ -2,291 +2,271 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Last Chamber</title>
-<meta name="theme-color" content="#0f0d0a">
+<meta name="description" content="A parlor game of nerve in an after-hours shooting gallery. Live and blank shells, public counts, secret order.">
+<meta name="theme-color" content="#14100d">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/icon.svg">
+<link rel="preload" href="/fonts/rye.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/barlow-sc-600.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/style.css">
+<script type="importmap">{ "imports": { "three": "/vendor/three.module.min.js" } }</script>
 </head>
-<body data-felt="green" data-finish="steel">
+<body>
 
-<svg width="0" height="0" aria-hidden="true">
+<svg width="0" height="0" aria-hidden="true" style="position:absolute">
   <defs>
-    <linearGradient id="g-steel" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#454b54"/><stop offset=".5" stop-color="#272b31"/><stop offset="1" stop-color="#15181c"/>
-    </linearGradient>
-    <linearGradient id="g-brass" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#c9a24b"/><stop offset=".5" stop-color="#8a6c2c"/><stop offset="1" stop-color="#5c471d"/>
-    </linearGradient>
-    <linearGradient id="g-wood" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#5d3d27"/><stop offset="1" stop-color="#32200f"/>
-    </linearGradient>
-    <linearGradient id="g-nickel" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#d8d5cc"/><stop offset=".5" stop-color="#9a968c"/><stop offset="1" stop-color="#5f5c53"/>
-    </linearGradient>
-
-    <symbol id="sh-live" viewBox="0 0 12 26">
-      <rect x="2.5" y="9" width="7" height="15" rx="1.5" fill="#b08d3f"/>
-      <rect x="2.5" y="2" width="7" height="8.5" rx="2.6" fill="#b53a2e"/>
-    </symbol>
-    <symbol id="sh-blank" viewBox="0 0 12 26">
-      <rect x="2.5" y="9" width="7" height="15" rx="1.5" fill="#b08d3f"/>
-      <rect x="2.5" y="2" width="7" height="8.5" rx="2.6" fill="#d8cdb0"/>
-    </symbol>
-    <symbol id="sh-spent" viewBox="0 0 12 26">
-      <rect x="3" y="9.5" width="6" height="14" rx="1.5" fill="none" stroke="#4a4334" stroke-width="1.2"/>
-      <rect x="3" y="2.5" width="6" height="7.5" rx="2.4" fill="none" stroke="#4a4334" stroke-width="1.2"/>
-    </symbol>
-
-    <symbol id="i-peek" viewBox="0 0 24 24">
-      <path d="M2.5 12s3.8-6 9.5-6 9.5 6 9.5 6-3.8 6-9.5 6-9.5-6-9.5-6z"/>
-      <circle cx="12" cy="12" r="2.6"/>
-    </symbol>
-    <symbol id="i-eject" viewBox="0 0 24 24">
-      <rect x="9" y="11" width="6" height="10" rx="1.4"/>
-      <path d="M12 8V2.8M9.4 5.2L12 2.6l2.6 2.6"/>
-    </symbol>
-    <symbol id="i-spin" viewBox="0 0 24 24">
-      <path d="M20 12a8 8 0 1 1-2.4-5.7"/>
-      <path d="M20.2 2.8v4.4h-4.4"/>
-    </symbol>
-    <symbol id="i-shield" viewBox="0 0 24 24">
-      <path d="M12 2.8l7 2.8v5.2c0 4.8-3.3 7.8-7 10-3.7-2.2-7-5.2-7-10V5.6z"/>
-    </symbol>
-    <symbol id="i-flask" viewBox="0 0 24 24">
-      <path d="M9.4 2.8h5.2M10.4 2.8v5.4l-4.6 8a3 3 0 0 0 2.6 4.6h7.2a3 3 0 0 0 2.6-4.6l-4.6-8V2.8"/>
-      <path d="M8 15.5h8"/>
-    </symbol>
-    <symbol id="i-double" viewBox="0 0 24 24">
-      <path d="M7 8.5c0-2 1-3.7 1.8-3.7S10.6 6.5 10.6 8.5V20H7z"/>
-      <path d="M13.4 8.5c0-2 1-3.7 1.8-3.7S17 6.5 17 8.5V20h-3.6z"/>
-    </symbol>
-    <symbol id="i-cuffs" viewBox="0 0 24 24">
-      <circle cx="7" cy="15.5" r="4.2"/>
-      <circle cx="17" cy="8.5" r="4.2"/>
-      <path d="M10.2 13l3.6-2.5"/>
-    </symbol>
-    <symbol id="i-cross" viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="6.5"/>
-      <path d="M12 2.5v5M12 16.5v5M2.5 12h5M16.5 12h5"/>
-    </symbol>
-    <symbol id="i-gear" viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="3.2"/>
-      <path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1"/>
-    </symbol>
+    <symbol id="i-peek" viewBox="0 0 24 24"><path d="M2.5 12s3.8-6 9.5-6 9.5 6 9.5 6-3.8 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.6"/></symbol>
+    <symbol id="i-eject" viewBox="0 0 24 24"><rect x="9" y="11" width="6" height="10" rx="1.4"/><path d="M12 8V2.8M9.4 5.2L12 2.6l2.6 2.6"/></symbol>
+    <symbol id="i-spin" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20.2 2.8v4.4h-4.4"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 2.8l7 2.8v5.2c0 4.8-3.3 7.8-7 10-3.7-2.2-7-5.2-7-10V5.6z"/></symbol>
+    <symbol id="i-flask" viewBox="0 0 24 24"><path d="M9.4 2.8h5.2M10.4 2.8v5.4l-4.6 8a3 3 0 0 0 2.6 4.6h7.2a3 3 0 0 0 2.6-4.6l-4.6-8V2.8"/><path d="M8 15.5h8"/></symbol>
+    <symbol id="i-double" viewBox="0 0 24 24"><path d="M7 8.5c0-2 1-3.7 1.8-3.7S10.6 6.5 10.6 8.5V20H7z"/><path d="M13.4 8.5c0-2 1-3.7 1.8-3.7S17 6.5 17 8.5V20h-3.6z"/></symbol>
+    <symbol id="i-cuffs" viewBox="0 0 24 24"><circle cx="7" cy="15.5" r="4.2"/><circle cx="17" cy="8.5" r="4.2"/><path d="M10.2 13l3.6-2.5"/></symbol>
+    <symbol id="i-sight" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.5"/><path d="M12 2.5v5M12 16.5v5M2.5 12h5M16.5 12h5"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+    <symbol id="i-dice" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="9" cy="9" r="1.1"/><circle cx="15" cy="15" r="1.1"/><circle cx="15" cy="9" r="1.1"/><circle cx="9" cy="15" r="1.1"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-tape" viewBox="0 0 24 24"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 20h14"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10v4M11 10v4M15 10v4M19 10v4"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
   </defs>
 </svg>
 
-<div id="flash"></div>
+<!-- the booth is always behind everything: attract mode on the menu, the table in play -->
+<div id="booth" class="booth">
+  <div id="hit" class="hitlayer"></div>
+  <div id="stamp" class="stamp" aria-hidden="true"></div>
+  <div id="flash" class="flash" aria-hidden="true"></div>
+</div>
+<div id="sr" class="sr-only" aria-live="polite" aria-atomic="false"></div>
+<div id="tip" class="tip" role="tooltip" hidden></div>
+<div id="loading" class="loading" aria-hidden="true"><span>Lighting the booth</span></div>
 
-<!-- ============ menu ============ -->
-<section id="menu" class="screen">
-  <svg class="crest" viewBox="0 0 90 90">
-    <circle cx="45" cy="45" r="41" fill="none" stroke="#c9a24b" stroke-width="1.6"/>
-    <circle cx="45" cy="45" r="35" fill="none" stroke="#c9a24b" stroke-width=".7" opacity=".6"/>
-    <use href="#sh-live" x="30" y="27" width="10" height="22" transform="rotate(-18 35 45)"/>
-    <use href="#sh-blank" x="50" y="27" width="10" height="22" transform="rotate(18 55 45)"/>
-    <circle cx="45" cy="72" r="1.4" fill="#c9a24b"/>
-    <circle cx="45" cy="18" r="1.4" fill="#c9a24b"/>
-  </svg>
-  <h1 class="wordmark">Last Chamber</h1>
-  <p class="tag">A parlor game of nerve. The counts are public. The order is not.</p>
-  <div class="modes">
-    <button class="mode" id="mSolo">
-      <span class="mode-name">Solo</span>
-      <span class="mode-desc">One seat. The rest are house players.</span>
-    </button>
-    <button class="mode" id="mHot">
-      <span class="mode-name">Hot Seat</span>
-      <span class="mode-desc">One device, passed around the table.</span>
-    </button>
-    <button class="mode" id="mOnline">
-      <span class="mode-name">Online</span>
-      <span class="mode-desc">A private table with a join code.</span>
-    </button>
-  </div>
-  <div class="menu-links">
-    <button class="linkbtn" id="wardrobeBtn">Wardrobe</button>
-    <button class="linkbtn" id="settingsBtn">
-      <svg class="i"><use href="#i-gear"/></svg> Table settings
-    </button>
+<!-- ============ the price board ============ -->
+<main id="menu" class="screen">
+  <section class="board" aria-labelledby="boardTitle">
+    <h1 id="boardTitle" class="board-title">Step right up</h1>
+    <p class="board-tag">A parlor game of nerve. The counts are public. The order is not.</p>
+    <ul class="price-list">
+      <li><button class="price" id="mSolo"><span class="price-name">Solo</span><span class="leader" aria-hidden="true"></span><span class="price-desc">You against the house</span></button></li>
+      <li><button class="price" id="mHot"><span class="price-name">Hot seat</span><span class="leader" aria-hidden="true"></span><span class="price-desc">One phone, passed around</span></button></li>
+      <li><button class="price" id="mOnline"><span class="price-name">Open a table</span><span class="leader" aria-hidden="true"></span><span class="price-desc">Friends join with a code</span></button></li>
+    </ul>
+    <form class="join-row" id="quickJoin" autocomplete="off">
+      <label for="quickCode">Got a code?</label>
+      <input id="quickCode" class="code-in" maxlength="4" inputmode="text" autocapitalize="characters" spellcheck="false" placeholder="KQ7R" aria-describedby="quickErr">
+      <button class="btn" type="submit">Join</button>
+      <p class="err" id="quickErr" role="alert"></p>
+    </form>
+    <nav class="board-links" aria-label="More">
+      <button class="linkbtn" id="paintBtn">Paint shop</button>
+      <button class="linkbtn" id="officeBtn">Back office</button>
+    </nav>
+  </section>
+</main>
+
+<!-- ============ the ticket booth (lobby) ============ -->
+<section id="lobby" class="screen hidden" aria-labelledby="lobbyTitle">
+  <div class="booth-window paper">
+    <h2 id="lobbyTitle" class="window-title">Your table</h2>
+    <div class="ticket-roll">
+      <strong class="roll-code" id="lobbyCode" aria-label="Table code">····</strong>
+      <p class="roll-line">Friends tap the invite link or type this code on the price board.</p>
+      <div class="roll-actions">
+        <button class="btn small" id="copyLink"><svg class="i"><use href="#i-copy"/></svg><span>Copy invite link</span></button>
+        <button class="btn small" id="bigCodeBtn"><svg class="i"><use href="#i-code"/></svg><span>Big code card</span></button>
+      </div>
+    </div>
+    <ul class="roster" id="lobbyRoster" aria-label="Seated players"></ul>
+    <p class="lobby-spec" id="lobbySpec"></p>
+    <div class="host-only" id="lobbyHost">
+      <div class="field-row">
+        <span class="field-label" id="lobbyBotsLbl">House players</span>
+        <div class="stepper" data-min="0" data-max="5" id="lobbyBots" aria-labelledby="lobbyBotsLbl"></div>
+      </div>
+      <div class="rules" id="lobbyRules"></div>
+    </div>
+    <p class="wait-line" id="lobbyWait">Waiting for the host to deal.</p>
+    <div class="actions">
+      <button class="btn gold" id="lobbyStart">Deal</button>
+      <button class="btn" id="lobbyLeave">Leave</button>
+    </div>
   </div>
 </section>
 
-<!-- ============ lobby ============ -->
-<section id="lobby" class="screen hidden">
-  <p class="lobby-label">Table code</p>
-  <h1 class="lobby-code" id="lobbyCode">····</h1>
-  <p class="lobby-hint">Anyone with this code can join. Six seats, unlimited spectators.</p>
-  <div class="lobby-roster" id="lobbyRoster"></div>
-  <p class="lobby-spec" id="lobbySpec"></p>
-  <div class="lobby-row" id="lobbyBots">
-    <span>House players</span>
-    <button class="step" id="botMinus">&minus;</button>
-    <b id="botCount">2</b>
-    <button class="step" id="botPlus">+</button>
+<!-- ============ the table ============ -->
+<section id="game" class="screen hud hidden" aria-label="The table">
+  <div class="hud-top">
+    <button class="icon-btn ticket-btn" id="hudMenu" aria-label="Table menu" data-tip="Leave or open the back office"><svg class="i"><use href="#i-menu"/></svg></button>
+    <button class="code-chip hidden" id="hudCode" aria-label="Show the big code card"><span>Table</span><b id="hudCodeVal"></b></button>
+    <span class="watch-chip hidden" id="watchChip">Watching</span>
   </div>
-  <div class="ruleblock lobby-rules hidden" id="lobbyRules"></div>
-  <div class="lobby-actions">
-    <button class="btn gold" id="lobbyStart">Deal</button>
-    <button class="btn" id="lobbyLeave">Leave</button>
+  <aside class="tape" id="tape" aria-label="The ledger">
+    <h2 class="sr-only">Ledger</h2>
+    <button class="tape-toggle" id="tapeToggle" aria-expanded="false" aria-controls="ledger"><svg class="i"><use href="#i-tape"/></svg><span id="tapeLatest">The booth is quiet.</span></button>
+    <div class="tape-roll" id="ledger" tabindex="0" aria-label="Game log"></div>
+    <form class="talk hidden" id="chatForm" autocomplete="off">
+      <label class="sr-only" for="chatIn">Table talk</label>
+      <input id="chatIn" maxlength="120" placeholder="Table talk" spellcheck="false">
+    </form>
+  </aside>
+  <div class="counter-ui">
+    <div class="stub" id="stub">
+      <p class="stub-prompt" id="prompt">&nbsp;</p>
+      <p class="stub-hint" id="hint"></p>
+    </div>
+    <div class="hand" id="hand" aria-label="Your items"></div>
   </div>
 </section>
 
-<!-- ============ game ============ -->
-<section id="game" class="screen game hidden">
-  <header>
-    <div class="brand">
-      <svg class="crest sm" viewBox="0 0 90 90">
-        <circle cx="45" cy="45" r="41" fill="none" stroke="#c9a24b" stroke-width="2.4"/>
-        <use href="#sh-live" x="30" y="27" width="10" height="22" transform="rotate(-18 35 45)"/>
-        <use href="#sh-blank" x="50" y="27" width="10" height="22" transform="rotate(18 55 45)"/>
-      </svg>
-      <span class="brand-name">Last Chamber</span>
+<!-- ============ dialogs ============ -->
+<dialog class="sheet" id="setup" aria-labelledby="setupTitle">
+  <form method="dialog" class="sheet-body" id="setupForm">
+    <header class="sheet-head">
+      <h2 id="setupTitle">Solo</h2>
+      <button class="icon-btn" value="cancel" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
+    </header>
+    <div id="setupFields"></div>
+    <p class="err" id="setupErr" role="alert"></p>
+    <div class="actions">
+      <button class="btn gold" id="setupGo" value="go">Deal</button>
     </div>
-    <div class="round-label" id="roundLabel">Round 1</div>
-    <div class="shellrow" id="shellRow"></div>
-  </header>
+  </form>
+</dialog>
 
-  <div class="game-body">
-    <div id="table">
-      <div id="felt"></div>
-      <div id="gunLayer"></div>
-      <div id="seats"></div>
-      <div id="fxLayer"></div>
-      <div id="centerMsg"></div>
+<dialog class="sheet" id="joinDlg" aria-labelledby="joinTitle">
+  <form method="dialog" class="sheet-body" id="joinForm">
+    <header class="sheet-head">
+      <h2 id="joinTitle">Take a seat</h2>
+      <button class="icon-btn" value="cancel" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
+    </header>
+    <p class="sheet-lede">Table <b id="joinCodeShow"></b> is open.</p>
+    <div class="field">
+      <label for="joinName">Your name at the table</label>
+      <div class="name-row">
+        <input id="joinName" maxlength="16" spellcheck="false" autocomplete="nickname">
+        <button type="button" class="icon-btn" id="joinDice" aria-label="Roll a new name" data-tip="Roll a new name"><svg class="i"><use href="#i-dice"/></svg></button>
+      </div>
     </div>
-
-    <aside id="rail">
-      <h2>The Ledger</h2>
-      <div id="ledger"></div>
-      <form id="chatForm" class="hidden" autocomplete="off">
-        <input id="chatIn" maxlength="120" placeholder="Table talk" spellcheck="false">
-      </form>
-    </aside>
-  </div>
-
-  <footer id="actionbar">
-    <div id="prompt">&nbsp;</div>
-    <div id="hand"></div>
-  </footer>
-</section>
-
-<!-- ============ overlays ============ -->
-<div class="overlay hidden" id="soloCfg">
-  <div class="card">
-    <h2>Solo Table</h2>
-    <label>Your name</label>
-    <input type="text" id="soloName" maxlength="12" value="You" spellcheck="false">
-    <label>House players</label>
-    <div class="seg" id="soloBots">
-      <button data-n="2">2</button><button data-n="3" class="sel">3</button>
-      <button data-n="4">4</button><button data-n="5">5</button>
+    <label class="toggle"><input type="checkbox" id="joinSpec"><span class="lever" aria-hidden="true"></span><span>Watch instead of playing</span></label>
+    <p class="err" id="joinErr" role="alert"></p>
+    <div class="actions">
+      <button class="btn gold" id="joinGo" value="go">Take a seat</button>
     </div>
-    <div class="ruleblock" id="soloRules"></div>
-    <button class="btn gold wide" id="soloGo">Deal</button>
-    <button class="linkbtn" data-close>Back</button>
-  </div>
-</div>
+  </form>
+</dialog>
 
-<div class="overlay hidden" id="hotCfg">
-  <div class="card">
-    <h2>Hot Seat</h2>
-    <label>Players at the device</label>
-    <div class="seg" id="hotCount">
-      <button data-n="2" class="sel">2</button><button data-n="3">3</button><button data-n="4">4</button>
-    </div>
-    <div id="hotNames"></div>
-    <label>House players</label>
-    <div class="seg" id="hotBots">
-      <button data-n="0" class="sel">0</button><button data-n="1">1</button><button data-n="2">2</button>
-    </div>
-    <div class="ruleblock" id="hotRules"></div>
-    <button class="btn gold wide" id="hotGo">Deal</button>
-    <button class="linkbtn" data-close>Back</button>
+<dialog class="curtain" id="passDlg" aria-label="Pass the device">
+  <div class="curtain-l" aria-hidden="true"></div><div class="curtain-r" aria-hidden="true"></div>
+  <div class="curtain-card">
+    <h2 class="curtain-head">Pass it to <span id="passTitle" class="curtain-name"></span></h2>
+    <p class="sub">Their items stay hidden until they take it.</p>
+    <button class="btn gold" id="passOk">I have it</button>
   </div>
-</div>
+</dialog>
 
-<div class="overlay hidden" id="onlineCfg">
-  <div class="card">
-    <h2>Online Table</h2>
-    <label>Your name</label>
-    <input type="text" id="netName" maxlength="12" value="" placeholder="Name" spellcheck="false">
-    <button class="btn gold wide" id="netCreate">Open a table</button>
-    <div class="rule"><span>or join one</span></div>
-    <label>Table code</label>
-    <input type="text" id="netCode" maxlength="4" placeholder="ABCD" spellcheck="false" class="codein">
-    <label class="check"><input type="checkbox" id="netSpec"> Join as spectator</label>
-    <button class="btn wide" id="netJoin">Join</button>
-    <p class="err" id="netErr"></p>
-    <button class="linkbtn" data-close>Back</button>
-  </div>
-</div>
-
-<div class="overlay hidden" id="passModal">
-  <div class="card">
-    <h2>Pass the gun</h2>
-    <p class="big" id="passName"></p>
-    <p class="sub">Hand the device over. Their cards stay face down until they take it.</p>
-    <button class="btn gold wide" id="passOk">I have it</button>
-  </div>
-</div>
-
-<div class="overlay hidden" id="peekModal">
-  <div class="card">
-    <h2>Next shell</h2>
-    <div id="peekResult" class="peek-result">&nbsp;</div>
-    <button class="btn wide hidden" id="peekHold">Hold to view</button>
+<dialog class="slip" id="peekDlg" aria-labelledby="peekTitle">
+  <div class="slip-body">
+    <h2 id="peekTitle">Next shell</h2>
+    <div class="peek-shell" id="peekShell" aria-live="polite"></div>
+    <button class="btn wide hidden" id="peekHold">Hold to look</button>
     <p class="sub">Only you saw this.</p>
     <button class="btn gold wide" id="peekOk">Done</button>
   </div>
-</div>
+</dialog>
 
-<div class="overlay hidden" id="overModal">
-  <div class="card">
-    <h2 id="overTitle">Survivor</h2>
-    <p class="sub" id="overSub"></p>
-    <button class="btn gold wide" id="againBtn">Deal again</button>
-    <button class="btn wide" id="overMenu">Leave the table</button>
-  </div>
-</div>
-
-<div class="overlay hidden" id="lookModal">
-  <div class="card wardrobe">
-    <h2>Wardrobe</h2>
-    <div class="fit-row">
-      <div class="fit-preview" id="fitPreview"></div>
-      <div class="fit-gun" id="fitGun"></div>
+<dialog class="sheet prize" id="overDlg" aria-labelledby="overTitle">
+  <div class="sheet-body">
+    <h2 id="overTitle" class="prize-title"></h2>
+    <ul class="prize-facts" id="overFacts"></ul>
+    <div class="reel-actions">
+      <button class="btn" id="reelPlay"><svg class="i"><use href="#i-play"/></svg>Replay the night</button>
+      <button class="btn" id="reelSave"><svg class="i"><use href="#i-save"/></svg>Save clip</button>
     </div>
-    <label>Visor</label>         <div class="seg swatches" id="fitSkin"></div>
-    <label>Suit trim</label>     <div class="seg" id="fitOutfit"></div>
-    <label>Suit color</label>    <div class="seg swatches" id="fitColor"></div>
-    <label>Helmet kit</label>    <div class="seg" id="fitHat"></div>
-    <label>Revolver</label>      <div class="seg" id="fitGunSeg"></div>
-    <label>Finish</label>        <div class="seg" id="fitFinish"></div>
-    <button class="btn gold wide" data-close>Done</button>
-  </div>
-</div>
-
-<div class="overlay hidden" id="settingsModal">
-  <div class="card">
-    <h2>Table Settings</h2>
-    <label>Felt</label>
-    <div class="seg" id="feltSeg">
-      <button data-v="green">Green</button>
-      <button data-v="oxblood">Oxblood</button>
-      <button data-v="midnight">Midnight</button>
+    <p class="sub" id="reelNote"></p>
+    <div class="actions">
+      <button class="btn gold" id="againBtn">Deal again</button>
+      <button class="btn" id="overMenu">Leave the table</button>
     </div>
-    <label class="check"><input type="checkbox" id="streamerChk"> Streamer mode: peeks need a hold to reveal</label>
-    <p class="sub" id="playedLine"></p>
-    <button class="btn gold wide" data-close>Done</button>
   </div>
-</div>
+</dialog>
+
+<dialog class="sheet paintshop" id="paintDlg" aria-labelledby="paintTitle">
+  <form method="dialog" class="sheet-body">
+    <header class="sheet-head">
+      <h2 id="paintTitle">Paint shop</h2>
+      <button class="icon-btn" value="cancel" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
+    </header>
+    <p class="sheet-lede">Your target, your enamel. It follows you to every table. Looks only, never odds.</p>
+    <div class="field">
+      <label for="paintName">Name on the plate</label>
+      <div class="name-row">
+        <input id="paintName" maxlength="16" spellcheck="false" autocomplete="nickname">
+        <button type="button" class="icon-btn" id="paintDice" aria-label="Roll a new name" data-tip="Roll a new name"><svg class="i"><use href="#i-dice"/></svg></button>
+      </div>
+    </div>
+    <fieldset class="choice"><legend>Figure</legend><div class="tiles" id="pFig"></div></fieldset>
+    <fieldset class="choice"><legend>Body enamel</legend><div class="inkpots" id="pBody"></div></fieldset>
+    <fieldset class="choice"><legend>Trim enamel</legend><div class="inkpots" id="pTrim"></div></fieldset>
+    <fieldset class="choice"><legend>Nameplate</legend><div class="inkpots" id="pPlate"></div></fieldset>
+    <fieldset class="choice"><legend>Revolver</legend><div class="tiles" id="pGun"></div></fieldset>
+    <fieldset class="choice"><legend>Finish</legend><div class="tiles" id="pFinish"></div></fieldset>
+    <div class="actions"><button class="btn gold" value="done">Done</button></div>
+  </form>
+</dialog>
+
+<dialog class="sheet" id="officeDlg" aria-labelledby="officeTitle">
+  <form method="dialog" class="sheet-body">
+    <header class="sheet-head">
+      <h2 id="officeTitle">Back office</h2>
+      <button class="icon-btn" value="cancel" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
+    </header>
+    <fieldset class="choice"><legend>Booth canvas</legend><div class="tiles" id="oAwning"></div></fieldset>
+    <label class="toggle"><input type="checkbox" id="oStreamer"><span class="lever" aria-hidden="true"></span><span>Streamer mode<small>Peeks need a press and hold, and the big code card stays on screen.</small></span></label>
+    <fieldset class="choice"><legend>Motion</legend><div class="tiles" id="oMotion"></div></fieldset>
+    <div class="field">
+      <label for="oVolume">Volume</label>
+      <input type="range" id="oVolume" min="0" max="100" step="5">
+    </div>
+    <p class="sub" id="oPlayed"></p>
+    <div class="actions"><button class="btn gold" value="done">Done</button></div>
+  </form>
+</dialog>
+
+<dialog class="sheet" id="tableMenu" aria-labelledby="tmTitle">
+  <form method="dialog" class="sheet-body">
+    <header class="sheet-head">
+      <h2 id="tmTitle">The table</h2>
+      <button class="icon-btn" value="cancel" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
+    </header>
+    <div class="actions stack">
+      <button class="btn" value="office" id="tmOffice">Back office</button>
+      <button class="btn" value="leave" id="tmLeave">Leave the table</button>
+      <button class="btn gold" value="cancel">Keep playing</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="codecard" id="codeDlg" aria-labelledby="codeTitle">
+  <div class="codecard-body">
+    <h2 class="sr-only" id="codeTitle">Join the table</h2>
+    <strong class="codecard-code" id="codeBig"></strong>
+    <canvas class="qr" id="codeQr" width="232" height="232" aria-label="QR code for the invite link"></canvas>
+    <p class="codecard-url" id="codeUrl"></p>
+    <button class="btn" id="codeClose">Close</button>
+  </div>
+</dialog>
+
+<div class="dock hidden" id="codeDock" aria-hidden="true"><span>Join</span><b id="codeDockVal"></b><small id="codeDockUrl"></small></div>
 
 <script type="module" src="/js/app.mjs"></script>
 </body>

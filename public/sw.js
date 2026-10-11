@@ -2,12 +2,27 @@
    Network-first so updates always win; cache is the offline fallback,
    which keeps solo and hot seat playable with no connection. */
 
-const CACHE = "lc-v1";
+const CACHE = "lc-v2";
 const SHELL = [
   "/",
   "/css/style.css",
   "/js/app.mjs",
+  "/js/world.mjs",
+  "/js/booth3d.mjs",
+  "/js/booth2d.mjs",
   "/shared/engine.mjs",
+  "/vendor/three.module.min.js",
+  "/vendor/addons/loaders/GLTFLoader.js",
+  "/vendor/addons/utils/BufferGeometryUtils.js",
+  "/vendor/addons/environments/RoomEnvironment.js",
+  "/vendor/qrcode.mjs",
+  "/models/booth.glb",
+  "/fonts/rye.woff2",
+  "/fonts/barlow-sc-500.woff2",
+  "/fonts/barlow-sc-600.woff2",
+  "/fonts/barlow-sc-700.woff2",
+  "/fonts/courier-prime-400.woff2",
+  "/fonts/courier-prime-700.woff2",
   "/manifest.webmanifest",
   "/icon.svg"
 ];
@@ -34,6 +49,7 @@ self.addEventListener("fetch", e => {
         caches.open(CACHE).then(c => c.put(e.request, copy));
         return res;
       })
-      .catch(() => caches.match(e.request, { ignoreSearch: true }))
+      .catch(() => caches.match(e.request, { ignoreSearch: true })
+        .then(hit => hit || (e.request.mode === "navigate" ? caches.match("/") : undefined)))
   );
 });
