@@ -138,15 +138,17 @@ function sSpin() { for (let i = 0; i < 8; i++) setTimeout(sClick, i * (45 + i * 
 
 /* ---------------- the booth ---------------- */
 let stage = null;
+/* 3D whenever the device has WebGL. Lite only when WebGL is missing, or the
+   3D booth proved unplayably slow on this device last time (and the player
+   hasn't picked a graphics level since). Core counts are not a signal: iPhone
+   Safari reports 2 by design. */
 function wantsLite() {
-  const q = store.quality;
-  if (q === "lite") return true;
-  if (q === "full") return false;
+  if (store.quality === "lite") return true;
+  if (store.quality === "full") return false;
   const cv = document.createElement("canvas");
   const gl = cv.getContext("webgl2") || cv.getContext("webgl");
   if (!gl) return true;
-  const mem = navigator.deviceMemory || 4, cores = navigator.hardwareConcurrency || 4;
-  return mem <= 2 || cores <= 2;
+  return !!ls.get("autoLite", false);
 }
 async function mountBooth() {
   const host = $("#booth");
@@ -154,7 +156,7 @@ async function mountBooth() {
   if (!wantsLite()) {
     try {
       const { createBooth } = await import("./booth3d.mjs");
-      stage = await createBooth(host, { awning: awn.ink });
+      stage = await createBooth(host, { awning: awn.ink, graphics: ls.get("graphics", "auto") });
     } catch (err) {
       console.warn("3D booth unavailable, using the lite booth", err);
       stage = null;
@@ -164,6 +166,7 @@ async function mountBooth() {
     const { createBooth2D } = await import("./booth2d.mjs");
     stage = await createBooth2D(host, { awning: awn.ink });
   }
+  stage.on("tooSlow", () => { if (ls.get("graphics", "auto") === "auto") ls.set("autoLite", true); });
   stage.on("tink", sTink);
   stage.on("flip", sFlip);
   stage.onFrame(placeHits);
@@ -202,7 +205,7 @@ function syncInset() {
   if (!stage) return;
   if (!$("#menu").classList.contains("hidden")) {
     const r = $(".board").getBoundingClientRect();
-    stage.setInset(0, innerWidth < innerHeight ? innerHeight - r.top + 8 : 0);
+    stage.setInset(0, innerHeight - r.top + 8, 0);
     return;
   }
   if (!$("#lobby").classList.contains("hidden")) {
@@ -214,9 +217,11 @@ function syncInset() {
   const tape = $("#tape");
   const inGame = !$("#game").classList.contains("hidden");
   if (!inGame) { stage.setInset(0, 0); return; }
-  /* wide: the tape strip sits on the right; narrow: the counter UI owns the bottom */
-  if (getComputedStyle(tape).position === "fixed" && !tape.classList.contains("open")) stage.setInset(tape.offsetWidth + 14, 0);
-  else stage.setInset(0, Math.max(0, innerHeight - tape.getBoundingClientRect().top + 8));
+  /* the bar owns the bottom, the top buttons own a strip at the top, and on
+     wide screens the ticket tape owns the right edge */
+  const bar = $(".counter-ui").getBoundingClientRect(), top = $(".hud-top").getBoundingClientRect();
+  const strip = getComputedStyle(tape).position === "fixed" && getComputedStyle(tape).display !== "none" && innerWidth >= 761;
+  stage.setInset(strip ? tape.offsetWidth + 14 : 0, Math.max(0, innerHeight - bar.top + 6), Math.max(0, top.bottom + 4));
 }
 /* the paint shop docks beside (or under) the preview target: keep the target in view */
 function paintInset() {
@@ -227,6 +232,7 @@ function paintInset() {
   else stage.setInset(0, innerHeight - r.top + 12);
 }
 addEventListener("resize", () => { if ($("#paintDlg").open) paintInset(); else syncInset(); });
+new ResizeObserver(() => { if (!$("#game").classList.contains("hidden")) syncInset(); }).observe(document.querySelector(".counter-ui"));
 function closeAll() { $$("dialog[open]").forEach(d => d.close()); }
 
 /* ---------------- ledger: the ticket tape ---------------- */
@@ -251,10 +257,16 @@ function announce(text) {
   while (sr.childElementCount > 4) sr.firstElementChild.remove();
   srTimer = setTimeout(() => { sr.innerHTML = ""; }, 8000);
 }
+$("#logBtn").onclick = () => $("#tapeToggle").click();
+document.addEventListener("pointerdown", e => { const t = $("#tape"); if (t.classList.contains("open") && !e.target.closest("#tape, #logBtn")) $("#tapeToggle").click(); });
 $("#tapeToggle").onclick = () => {
   const tape = $("#tape"), open = !tape.classList.contains("open");
   tape.classList.toggle("open", open);
   $("#tapeToggle").setAttribute("aria-expanded", open);
+  $("#logBtn").setAttribute("aria-expanded", open);
+  /* the log sheet sits just above the bar, whatever its height */
+  tape.style.bottom = open && getComputedStyle(tape).position === "fixed" && innerWidth < 761 || open && matchMedia("(max-aspect-ratio: 4/5)").matches
+    ? (innerHeight - $(".counter-ui").getBoundingClientRect().top + 8) + "px" : "";
   if (open) { const r = $("#ledger"); r.scrollTop = r.scrollHeight; }
 };
 
@@ -288,45 +300,52 @@ function startAim(tid, el, at = performance.now()) {
   endAim();
   if (ui.selItem != null) { ui.selItem = null; renderHand(); }
   aimS = { tid, el, armed: false, t0: at };
-  el.style.setProperty("--hold", HOLD_MS + "ms");
-  el.classList.add("aiming");
-  el.querySelector(".aim-t").textContent = `Aiming at ${isYou(tid) ? "yourself" : ui.pub.players.find(q => q.id === tid)?.name}...`;
   stage.preview(tid);
+  aimPrompt(tid, false);
   sCock();
   aimS.timer = setTimeout(() => {
     if (!aimS || aimS.tid !== tid) return;
     aimS.armed = true;
-    el.classList.add("armed");
-    el.querySelector(".aim-t").textContent = "Let go to shoot!";
+    aimPrompt(tid, true);
   }, HOLD_MS);
 }
 function endAim() {
   if (!aimS) return;
   clearTimeout(aimS.timer);
-  aimS.el.classList.remove("aiming", "armed");
-  aimS.el.querySelector(".aim-t").textContent = idleAimText(aimS.tid);
   aimS = null;
+}
+/* the bar says who you're aiming at, and what they're holding */
+function aimPrompt(tid, armed) {
+  const t = ui.pub?.players.find(q => q.id === tid);
+  if (!t) return;
+  const who = isYou(tid) ? "yourself" : `<b>${esc(t.name)}</b>`;
+  const kit = !isYou(tid) && t.items.length ? `${esc(t.name)} has ${t.items.map(k => E.ITEMS[k].name).join(", ")}` : "";
+  setPrompt(armed ? `Let go to shoot ${who}!` : `Aiming at ${who}`, armed ? "" : kit);
+}
+function turnPrompt() {
+  if (!ui.canAct) return;
+  const me = ui.pub.players.find(p => p.id === ui.you);
+  const fine = matchMedia("(pointer: fine)").matches;
+  setPrompt(`<b>Your turn${ui.mode === "hot" && me ? ", " + esc(me.name) : ""}!</b> ${fine ? "Point at someone, hold, let go to shoot." : "Hold someone to aim."}`);
 }
 function releaseAim(at = performance.now()) {
   if (!aimS) return;
-  const { tid, t0 } = aimS;
+  const { tid, t0, armed } = aimS;
   endAim();
-  if (at - t0 >= HOLD_MS) humanShoot(tid);
-  else { stage.unpreview(); $("#hint").textContent = "Hold a little longer, then let go."; }
+  /* both clocks must agree it was a hold: the input timestamps, and the arm
+     timer having run before the release arrived. Either alone can be fooled
+     by a busy page; together a quick tap never fires */
+  if (armed && at - t0 >= HOLD_MS) humanShoot(tid);
+  else { stage.unpreview(); turnPrompt(); $("#hint").textContent = "Hold a little longer, then let go."; }
 }
-function cancelAim() { if (!aimS) return; endAim(); stage.unpreview(); }
+function cancelAim() { if (!aimS) return; endAim(); stage.unpreview(); turnPrompt(); }
+/* The hit buttons are for keyboards and screen readers only; pointers aim at
+   the figures in the 3D scene. Touch: press and hold on someone (slide to
+   switch), let go to shoot. Mouse: point at someone to aim, hold the button,
+   let go to shoot. */
 function wireTarget(b, pid) {
-  b.addEventListener("pointerdown", e => {
-    if (e.button > 0 || !ui.canAct || !b.classList.contains("targetable")) return;
-    e.preventDefault();
-    try { b.releasePointerCapture(e.pointerId); } catch {}
-    pressing = true;
-    startAim(pid, b, e.timeStamp);
-  });
-  /* sliding the finger along the rail re-aims */
-  b.addEventListener("pointerenter", e => { if (pressing && b.classList.contains("targetable")) startAim(pid, b, e.timeStamp); });
-  b.addEventListener("pointerleave", () => { if (aimS?.el === b) cancelAim(); });
-  b.addEventListener("pointerup", e => { if (aimS?.el === b) releaseAim(e.timeStamp); });
+  b.addEventListener("focus", () => { if (ui.canAct && !aimS && b.matches(":focus-visible")) { stage.preview(pid); aimPrompt(pid, false); } });
+  b.addEventListener("blur", () => { if (ui.canAct && !aimS) { stage.unpreview(); turnPrompt(); } });
   b.addEventListener("keydown", e => {
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (!e.repeat) startAim(pid, b, e.timeStamp); }
     else if (e.key === "Escape" && aimS) { e.preventDefault(); cancelAim(); }
@@ -341,7 +360,33 @@ function wireTarget(b, pid) {
   });
   b.addEventListener("contextmenu", e => e.preventDefault());
 }
-addEventListener("pointerup", () => { pressing = false; cancelAim(); });
+const hitEl = pid => document.getElementById("hit" + pid);
+let hoverPid = null;
+{
+  const boothEl = $("#booth");
+  const live = pid => pid != null && ui.pub?.players.find(p => p.id === pid)?.alive;
+  boothEl.addEventListener("pointerdown", e => {
+    if (!ui.canAct || e.button > 0) return;
+    const pid = stage.pick(e.clientX, e.clientY, e.pointerType === "mouse" ? 30 : 120);
+    if (!live(pid)) return;
+    e.preventDefault();
+    pressing = true;
+    startAim(pid, hitEl(pid), e.timeStamp);
+  });
+  boothEl.addEventListener("pointermove", e => {
+    if (!ui.canAct) return;
+    const pid = stage.pick(e.clientX, e.clientY, e.pointerType === "mouse" ? 30 : 120);
+    if (pressing) { if (live(pid) && pid !== aimS?.tid) startAim(pid, hitEl(pid), e.timeStamp); return; }
+    if (e.pointerType !== "mouse" || pid === hoverPid) return;
+    hoverPid = live(pid) ? pid : null;
+    boothEl.style.cursor = hoverPid != null ? "crosshair" : "";
+    if (hoverPid != null) { stage.preview(hoverPid); aimPrompt(hoverPid, false); }
+    else { stage.unpreview(); turnPrompt(); }
+  });
+  boothEl.addEventListener("pointerleave", e => { if (e.pointerType === "mouse" && !pressing && hoverPid != null) { hoverPid = null; stage.unpreview(); turnPrompt(); } });
+  boothEl.addEventListener("contextmenu", e => { if (ui.canAct) e.preventDefault(); });
+}
+addEventListener("pointerup", e => { if (!pressing) return; pressing = false; if (aimS) releaseAim(e.timeStamp); });
 addEventListener("pointercancel", () => { pressing = false; cancelAim(); });
 
 /* ---------------- first-turn coach mark ---------------- */
@@ -446,6 +491,7 @@ function renderState() {
   renderHand();
 }
 function syncCounts() {
+  if (!document.getElementById("counts")) return;
   const pub = ui.pub;
   $("#counts").innerHTML = pub?.round ? `<span class="live">${pub.live} live</span> · ${pub.blank} blank left` : "";
   const me = !ui.spectating && ui.you != null ? pub?.players.find(p => p.id === ui.you) : null;
@@ -493,7 +539,7 @@ function closeTray() {
 $("#itemsBtn").onclick = () => $("#tray").classList.contains("hidden") ? openTray() : closeTray();
 document.addEventListener("pointerdown", e => { if (!e.target.closest(".items-wrap")) closeTray(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#tray").classList.contains("hidden")) { closeTray(); $("#itemsBtn").focus(); } });
-const TURN_HINT = "Shoot yourself and hit a blank? You go again.";
+
 function setPrompt(html, hint = "") {
   $("#prompt").innerHTML = html || "&nbsp;";
   $("#hint").textContent = hint;
@@ -748,17 +794,15 @@ function enableInput() {
   ui.canAct = true;
   ui.selItem = null; ui.a11yAim = null;
   const me = ui.pub.players.find(p => p.id === ui.you);
-  const willCoach = !ls.get("taught", false) && !ui.spectating;
-  setPrompt(`<b>Your turn${ui.mode === "hot" && me ? ", " + esc(me.name) : ""}!</b> Press and hold someone to aim, let go to shoot.`, willCoach ? "" : TURN_HINT);
+  hoverPid = null;
+  turnPrompt();
   $("#stub").classList.remove("yours"); void $("#stub").offsetWidth; $("#stub").classList.add("yours");
   stage.setBulbs("chase");
   stage.sweep(true);
   setTargets(true);
   renderHand();
-  announce(`Your turn! Press and hold someone to aim, let go to shoot. ${ui.pub.live} live and ${ui.pub.blank} blank left.`);
+  announce(`Your turn! ${ui.pub.live} live and ${ui.pub.blank} blank left. Tab to a player, hold Enter, let go to shoot.`);
   maybeCoach();
-  const first = $(".tbtn.targetable");
-  if (first && document.activeElement === document.body) first.focus({ preventScroll: true });
 }
 function waitPrompt(cur) {
   ui.canAct = false;
@@ -968,7 +1012,7 @@ function openSetup(kind) {
         ns.map((_, i) => i), store.rules);
     };
   } else {
-    f.innerHTML = nameField("oName", store.name) + `<p class="sheet-lede">You get a four-letter code and an invite link. Friends tap the link and they're in.</p>`;
+    f.innerHTML = nameField("oName", store.name);
     dlg.onclose = () => {
       if (dlg.returnValue !== "go") return;
       audio();
@@ -1066,7 +1110,8 @@ function connect(onOpen) {
         ui.queue.length = 0; ui.anim = false;
         enterTable(m.state);
         log(livesLine(m.state.players.length, m.state.rules?.lives ?? 3), "sys");
-        if (ui.spectating) log("You're watching this one.", "sys");
+        if (ui.spectating) log(m.pending ? "You're in next game. Watch this one!" : "You're watching this one.", "sys");
+        $("#watchChip").textContent = m.pending ? "In next game" : "Watching";
         if (m.state.turn != null) { stage.setActive(m.state.turn); ui.gunAt = m.state.turn;
           stage.giveGun(m.state.turn, lookOf(m.state.players.find(p => p.id === m.state.turn)), false); }
         if (m.state.round) stage.counts(m.state.round, m.state.live, m.state.blank);
@@ -1096,10 +1141,17 @@ function onRoster(m) {
   ui.host = meHost || (ui.host && !m.players.some(p => p.host && !p.you));
   $("#lobbyHost").classList.toggle("hidden", !ui.host);
   $("#lobbyStart").classList.toggle("hidden", !ui.host);
-  $("#lobbyWait").classList.toggle("hidden", ui.host);
   if (ui.host && !$("#lobbyRules").childElementCount) rulesBlock($("#lobbyRules"));
-  if (ui.host && !lobbyBots) lobbyBots = stepper($("#lobbyBots"), { min: 0, max: 5, value: ls.get("lobbyBots", 2), label: "house players", onChange: v => ls.set("lobbyBots", v) });
-  if (!m.started) {
+  if (ui.host && !lobbyBots) lobbyBots = stepper($("#lobbyBots"), { min: 0, max: 5, value: ls.get("lobbyBots2", 0), label: "bots", onChange: v => { ls.set("lobbyBots2", v); syncDeal(); } });
+  /* nobody gets dealt in by accident: alone, the host's main move is to invite */
+  ui.humans = m.players.length;
+  syncDeal();
+  /* say who's coming in next game */
+  for (const n of m.waiting || []) if (!(ui.waiting || []).includes(n) && ui.pub && !ui.pub.over) log(`<b>${esc(n)}</b> joined. They're in next game.`, "sys");
+  ui.waiting = m.waiting || [];
+  /* a finished game stays on screen; anyone new lands in the lobby */
+  const onResults = ui.pub?.over && !$("#game").classList.contains("hidden");
+  if (!m.started && !onResults) {
     closeAll();
     show("#lobby");
     /* seated players stand on the rail while the lobby fills */
@@ -1111,7 +1163,16 @@ function onRoster(m) {
   }
   syncDock();
 }
-$("#lobbyStart").onclick = () => ui.ws?.send(JSON.stringify({ t: "start", bots: lobbyBots?.value ?? 2, rules: store.rules }));
+function syncDeal() {
+  const alone = (ui.humans || 1) < 2, bots = lobbyBots?.value ?? 0;
+  const btn = $("#lobbyStart");
+  btn.textContent = alone ? (bots ? `Play with ${bots} ${bots === 1 ? "bot" : "bots"}` : "Play with a bot") : "Deal";
+  btn.classList.toggle("gold", !alone);
+  $("#copyLink").classList.toggle("gold", alone);
+  $("#lobbyWait").textContent = ui.host ? (alone ? "Waiting for friends. Send them the link!" : "Everyone here? Deal when you're ready.") : "Waiting for the host to deal.";
+  $("#lobbyWait").classList.remove("hidden");
+}
+$("#lobbyStart").onclick = () => ui.ws?.send(JSON.stringify({ t: "start", bots: lobbyBots?.value ?? 0, rules: store.rules }));
 $("#lobbyLeave").onclick = () => leaveTable();
 $("#copyLink").onclick = async () => {
   const url = inviteUrl(ui.code);
@@ -1148,9 +1209,11 @@ $("#bigCodeBtn").onclick = openCodeCard;
 $("#hudCode").onclick = openCodeCard;
 $("#codeClose").onclick = () => $("#codeDlg").close();
 function syncDock() {
-  const on = store.streamer && ui.mode === "online" && !!ui.code;
-  $("#codeDock").classList.toggle("hidden", !on);
-  if (on) { $("#codeDockVal").textContent = ui.code; $("#codeDockUrl").textContent = inviteUrl(ui.code).replace(/^https?:\/\//, ""); }
+  /* the code lives in one place: the chip in the top bar, larger in streamer mode */
+  const on = ui.mode === "online" && !!ui.code;
+  $("#hudCode").classList.toggle("hidden", !on);
+  $("#hudCode").classList.toggle("big", on && store.streamer);
+  $("#hudCodeUrl").textContent = on ? inviteUrl(ui.code).replace(/^https?:\/\//, "") : "";
 }
 
 /* ---------------- end of the night ---------------- */
@@ -1343,7 +1406,7 @@ function openPaint() {
   $("#paintName").value = store.name;
   $("#paintName").oninput = e => { const v = e.target.value.trim(); if (v) { store.name = v; preview(); } };
   $("#paintDice").onclick = () => { $("#paintName").value = W.carnivalName([store.name]); store.name = $("#paintName").value; preview(); };
-  const focusFor = k => stage.setPreviewFocus(k === "gun" || k === "finish" ? "gun" : "target");
+  const focusFor = () => stage.setPreviewFocus("target");
   const set = (k, v) => { const l = store.look; l[k] = v; store.look = l; preview(); stage.giveGun(0, store.look, false); focusFor(k); };
   for (const [sel, k] of [["#pFig", "fig"], ["#pBody", "body"], ["#pTrim", "trim"], ["#pPlate", "plate"], ["#pGun", "gun"], ["#pFinish", "finish"], ["#paintName", "name"]])
     $(sel).onfocusin = () => focusFor(k);
@@ -1380,6 +1443,19 @@ function openOffice() {
   })), store.awning, v => { store.awning = v; stage.setAwning(W.AWNINGS.find(a => a.id === v).ink); });
   $("#oStreamer").checked = store.streamer;
   $("#oStreamer").onchange = e => { store.streamer = e.target.checked; document.body.classList.toggle("stream", store.streamer); syncDock(); };
+  tiles($("#oGraphics"), "graphics", [
+    { value: "auto", label: "Auto", tip: "Adjusts itself to keep play smooth." },
+    { value: "high", label: "High", tip: "Sharpest picture and full shadows." },
+    { value: "balanced", label: "Balanced", tip: "A little softer, easier on the battery." },
+    { value: "saver", label: "Battery saver", tip: "Lowest resolution, no shadows." }
+  ], ls.get("graphics", "auto"), v => {
+    ls.set("graphics", v);
+    const wasLite = stage.kind !== "3d";
+    ls.set("autoLite", false);
+    if (stage.setGraphics) stage.setGraphics(v);
+    else if (wasLite) $("#oGraphicsNote").textContent = "3D comes back next time you open the game.";
+  });
+  $("#oGraphicsNote").textContent = stage.kind !== "3d" && ls.get("autoLite", false) ? "Using the simple 2D booth because 3D was too slow here. Pick a level to try 3D again." : "";
   tiles($("#oMotion"), "motion", [
     { value: "system", label: "Follow device" }, { value: "full", label: "Full" }, { value: "reduce", label: "Reduced" }
   ], store.motion, v => { store.motion = v; applyMotion(); });
@@ -1390,7 +1466,7 @@ function openOffice() {
     if (master) master.gain.value = store.volume / 100;
   };
   vol.onchange = () => { audio(); sClick(); };
-  $("#oPlayed").textContent = `Games finished on this device: ${g}. New booth canvas unlocks as you play.`;
+
   $("#officeDlg").showModal();
 }
 $("#officeBtn").onclick = openOffice;

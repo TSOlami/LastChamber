@@ -2,7 +2,7 @@
    Network-first so updates always win; cache is the offline fallback,
    which keeps solo and hot seat playable with no connection. */
 
-const CACHE = "lc-v3";
+const CACHE = "lc-v4";
 const SHELL = [
   "/",
   "/css/style.css",
@@ -10,6 +10,7 @@ const SHELL = [
   "/js/world.mjs",
   "/js/booth3d.mjs",
   "/js/automaton.mjs",
+  "/js/automaton2d.mjs",
   "/js/booth2d.mjs",
   "/shared/engine.mjs",
   "/vendor/three.module.min.js",

@@ -169,7 +169,7 @@ export async function createBooth(host, opts = {}) {
   const counter = part("COUNTER").clone(); restyle(counter);
   place(counter, { y: 0, z: .35 }); room.add(counter);
   const posts = part("POSTS").clone(); restyle(posts);
-  place(posts, { y: 0, z: -.45 }); posts.scale.x = .55; room.add(posts);
+  place(posts, { y: 0, z: -.45 }); posts.scale.x = .72; room.add(posts);
 
   /* brass track the gun carriage rides: custody is one continuous line */
   const track = new THREE.Mesh(new THREE.BoxGeometry(4.7, .012, .035), M.brass);
@@ -194,7 +194,7 @@ export async function createBooth(host, opts = {}) {
     const pos = g.attributes.position, uv = g.attributes.uv;
     for (let i = 0; i < pos.count; i++) uv.setXY(i, (pos.getX(i) + W / 2) / W, (pos.getY(i) + .22) / (H + .22));
     const val = new THREE.Mesh(g, valMat);
-    val.position.set(0, 2.9, -.42); val.scale.x = .53; awn.add(val);
+    val.position.set(0, 2.9, -.42); val.scale.x = .7; awn.add(val);
     const roof = new THREE.Mesh(new THREE.PlaneGeometry(5.4, 3.2), valMat);
     roof.rotation.x = Math.PI / 2 + .3; roof.position.set(0, 3.55, -1.9); awn.add(roof);
   }
@@ -248,7 +248,7 @@ export async function createBooth(host, opts = {}) {
     }
     for (let i = 0; i < 18; i++) {
       const t = i / 17;
-      bulbPts.push(new THREE.Vector3(-1.7 + t * 3.4, 3.25, -.36));
+      bulbPts.push(new THREE.Vector3(-2.25 + t * 4.5, 3.25, -.36));
     }
     /* a full ring: bulbs down both sides and along the foot of the sign */
     for (let i = 1; i < 6; i++) {
@@ -449,21 +449,85 @@ export async function createBooth(host, opts = {}) {
     room.add(a.group);
     return { pid: p.id, name: p.name, look, a, x: 0, z: STAGE_Z };
   }
+  const riser = new THREE.Mesh(new THREE.BoxGeometry(3.2, .24, .5), M.wood);
+  riser.position.set(0, .12, STAGE_Z - .52); riser.castShadow = riser.receiveShadow = true; riser.visible = false;
+  room.add(riser);
   function layoutCast() {
     const n = cast.length;
     const portrait = camera.aspect < 1.1 && mode !== "preview";
-    const span = Math.min(portrait ? 2.3 : 3.9, Math.max(.9, (n - 1) * .95));
-    const gap = n > 1 ? span / (n - 1) : 1;
-    /* a crowded stage gets slightly smaller figures rather than overlapping ones */
-    const sc = Math.min(1, gap / .62);
+    /* phones: two rows from four seats up, so figures stay big; wide screens:
+       one arc, staggered into two depths from five seats up */
+    const rows = mode !== "preview" && (portrait ? n >= 4 : n >= 5);
+    riser.visible = rows;
+    const front = rows && portrait ? Math.ceil(n / 2) : n;
     cast.forEach((c, i) => {
-      const u = n === 1 ? 0 : i / (n - 1) * 2 - 1;
-      c.x = u * span / 2; c.z = STAGE_Z - (1 - u * u) * .32;
-      c.a.group.position.set(c.x, 0, c.z);
-      c.a.group.scale.setScalar(sc);
-      c.a.group.rotation.y = -u * .22;
-      c.sc = sc;
+      let u, back, k;
+      if (rows && portrait) {
+        /* front row first (you lead it), back row sits in the gaps */
+        back = i >= front; k = back ? n - front : front;
+        const j = back ? i - front : i;
+        const step = .82, w = (k - 1) * step;
+        c.x = -w / 2 + j * step + (back ? (front === k ? step / 2 : 0) : 0) - (back && front === k ? step / 4 : 0);
+        u = c.x / 1.4;
+      } else {
+        const span = Math.min(2.6, Math.max(.9, (n - 1) * (rows ? .54 : .9)));
+        u = n === 1 ? 0 : i / (n - 1) * 2 - 1;
+        back = rows && i % 2 === 1;
+        c.x = u * span / 2;
+      }
+      c.z = rows ? (back ? STAGE_Z - .52 : STAGE_Z + .08) : STAGE_Z - (1 - u * u) * .28;
+      c.y = back ? .24 : 0;
+      c.a.group.position.set(c.x, c.y, c.z);
+      c.a.group.scale.setScalar(1);
+      c.a.group.rotation.y = -u * (rows ? .12 : .2);
+      c.sc = 1;
     });
+  }
+  /* fit the camera so every figure, hat to counter, and the counter props sit in
+     the part of the screen the UI leaves free */
+  const fitCam = new THREE.PerspectiveCamera();
+  const _fp = new THREE.Vector3();
+  function fitPoints() {
+    const pts = [];
+    for (const c of cast) {
+      const top = c.y + 2.12, hw = .42;
+      pts.push(vec(c.x - hw, top, c.z), vec(c.x + hw, top, c.z), vec(c.x - hw, COUNTER_Y + .02, c.z), vec(c.x + hw, COUNTER_Y + .02, c.z));
+    }
+    if (!pts.length) pts.push(vec(-1.2, 2.1, STAGE_Z), vec(1.2, 2.1, STAGE_Z), vec(-1.2, 1, STAGE_Z), vec(1.2, 1, STAGE_Z));
+    if (mode === "play") for (const b of [rackBox, tBox]) pts.push(vec(b.min.x, b.max.y + .05, b.max.z), vec(b.max.x, b.max.y + .05, b.max.z), vec(b.min.x, b.min.y, b.max.z), vec(b.max.x, b.min.y, b.max.z));
+    return pts;
+  }
+  function fitCamera(w, h) {
+    const pts = fitPoints();
+    fitCam.copy(camera);
+    const yTop = 1 - 2 * insetT / h - .04, yBot = -1 + 2 * insetB / h + .04, xm = .96;
+    const tilt = Math.tan(THREE.MathUtils.degToRad(mode === "attract" ? 6 : 9));
+    const cx = 0, cz = STAGE_Z;
+    let lo = .8, hi = 30, best = null;
+    const place = (d, ly) => { fitCam.position.set(cx, ly + d * tilt, cz + d); fitCam.lookAt(cx, ly, cz); fitCam.updateMatrixWorld(true); };
+    const measure = () => {
+      let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+      for (const q of pts) { _fp.copy(q).project(fitCam); x0 = Math.min(x0, _fp.x); x1 = Math.max(x1, _fp.x); y0 = Math.min(y0, _fp.y); y1 = Math.max(y1, _fp.y); }
+      return { x0, x1, y0, y1 };
+    };
+    for (let it = 0; it < 28; it++) {
+      const d = (lo + hi) / 2;
+      let ly = 1.5;
+      for (let k = 0; k < 4; k++) {
+        place(d, ly);
+        const m = measure();
+        /* anchor the counter line just above the bar; spare room goes up top */
+        const off = m.y0 - yBot;
+        ly += off * d * Math.tan(THREE.MathUtils.degToRad(fitCam.fov / 2));
+      }
+      place(d, ly);
+      const m = measure();
+      const fits = m.x0 >= -xm && m.x1 <= xm && (m.y1 - m.y0) <= (yTop - yBot);
+      if (fits) { best = { d, ly }; hi = d; } else lo = d;
+    }
+    if (!best) best = { d: hi, ly: 1.5 };
+    camBase.pos.set(cx, best.ly + best.d * tilt, cz + best.d);
+    camBase.look.set(cx, best.ly, cz);
   }
   function disposeCast() { for (const c of cast) { room.remove(c.a.group); c.a.dispose(); } cast = []; }
 
@@ -495,6 +559,7 @@ export async function createBooth(host, opts = {}) {
     c.fillStyle = g; c.fillRect(0, 0, w, h);
   }, 32, 32);
   const sparkList = [];
+  const ray = new THREE.Raycaster();
   function sparks(at, n) {
     if (reduced()) n = Math.min(n, 6);
     for (let i = 0; i < n; i++) {
@@ -548,7 +613,7 @@ export async function createBooth(host, opts = {}) {
   const camBase = { pos: new THREE.Vector3(), look: new THREE.Vector3() };
   const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
   let camFocus = null, camK = { pos: .55, look: .7 }, camPush = { x: 0, v: 0 }, shake = 0, mode = opts.mode || "attract";
-  let insetR = 0, insetB = 0, previewFocus = "target";
+  let insetR = 0, insetB = 0, insetT = 0, previewFocus = "target";
   const vec = (x, y, z) => new THREE.Vector3(x, y, z);
   function frameCamera() {
     const w = host.clientWidth || 1, h = host.clientHeight || 1;
@@ -558,7 +623,7 @@ export async function createBooth(host, opts = {}) {
     if (mode === "preview") {
       camera.fov = 30;
       const T = Math.tan(THREE.MathUtils.degToRad(15));
-      const gun = previewFocus === "gun";
+      const gun = false;
       /* the whole figure, hat to knees; for the gun, the hand and revolver with some arm */
       const centre = gun ? gunHolder.position.clone() : vec(0, 1.32, STAGE_Z);
       const W = gun ? .8 : 1.0, H = gun ? .5 : 1.95;
@@ -568,29 +633,8 @@ export async function createBooth(host, opts = {}) {
       camBase.pos.set(centre.x, centre.y + lift, centre.z + d);
       /* centre it in the region above a bottom sheet */
       camBase.look.set(centre.x, centre.y - (insetB / h) * half, centre.z);
-    } else if (a < 1.1) {
-      /* portrait: back off until the whole rail fits the width; the rail is the hero */
-      camera.fov = 46;
-      const hf = Math.atan(Math.tan(THREE.MathUtils.degToRad(23)) * a);
-      const dist = 1.62 / Math.tan(hf);
-      /* the row of figures sets the distance; tilt so the counter meets the controls and the awning takes the slack */
-      camBase.pos.set(0, 2.7, STAGE_Z + dist);
-      camBase.look.set(0, 2.08, STAGE_Z);
-    } else if (mode === "attract") {
-      camera.fov = 40;
-      camBase.pos.set(0, 1.62, 3.9);
-      camBase.look.set(0, 1.5, -1.4);
     } else {
-      camera.fov = a > 1.9 ? 34 : 38;
-      camBase.pos.set(0, 1.8, 3.55);
-      camBase.look.set(0, 1.72, -1.4);
-    }
-    if (insetB > 0 && mode !== "preview") {
-      const k = Math.min(.7, insetB / h);
-      const off = new THREE.Vector3().subVectors(camBase.pos, camBase.look);
-      const back = Math.sqrt(1 / (1 - k));
-      camBase.pos.copy(camBase.look).addScaledVector(off, back);
-      camBase.look.y -= k * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * off.length() * back;
+      camera.fov = a < 1.1 ? 50 : 38;
     }
     /* the ledger strip covers the right edge: centre the booth in what's left */
     if (insetR > 0) camera.setViewOffset(w + insetR, h, insetR, 0, w, h);
@@ -599,6 +643,7 @@ export async function createBooth(host, opts = {}) {
     renderer.setSize(w, h, false);
     if (typeof layoutCast === "function" && cast) layoutCast();
     if (typeof placeProps === "function") placeProps();
+    if (mode !== "preview" && typeof fitCamera === "function") fitCamera(w, h);
   }
   const ro = new ResizeObserver(frameCamera); ro.observe(host);
   frameCamera();
@@ -616,9 +661,28 @@ export async function createBooth(host, opts = {}) {
   let acc = 0;
   /* adaptive quality: if frames run long, step render resolution down, then
      drop shadows; physics is fixed-step so gameplay timing never changes */
-  const perf = { frames: 0, time: 0, level: 0, ratio: renderer.getPixelRatio() };
+  const DPR = window.devicePixelRatio || 1;
+  const perf = { frames: 0, time: 0, level: 0, ratio: renderer.getPixelRatio(), auto: true, slow: 0 };
+  function setGraphics(level) {
+    perf.auto = level === "auto"; perf.level = 0; perf.frames = perf.time = 0;
+    const ratio = { high: Math.min(DPR, 2), balanced: Math.min(DPR, 1.5), saver: 1, auto: Math.min(DPR, 1.75) }[level] || Math.min(DPR, 1.75);
+    perf.ratio = ratio; renderer.setPixelRatio(ratio);
+    const sh = level !== "saver";
+    if (renderer.shadowMap.enabled !== sh) {
+      renderer.shadowMap.enabled = sh;
+      scene.traverse(o => { if (o.material) [].concat(o.material).forEach(m => { m.needsUpdate = true; }); });
+    }
+    halos.visible = level !== "saver";
+    frameCamera();
+  }
   function adapt(dt) {
-    if (perf.level >= 3 || document.hidden) return;
+    if (!perf.auto || document.hidden) return;
+    if (perf.level >= 3) {
+      /* still crawling at the lowest setting: tell the app, once */
+      perf.frames++; perf.time += dt;
+      if (perf.time > 4 && perf.frames >= 3) { if (perf.time / perf.frames > 1 / 14 && !perf.slow++) emit("tooSlow"); perf.frames = perf.time = 0; }
+      return;
+    }
     perf.frames++; perf.time += dt;
     /* judge over about 3 seconds, and never on fewer than 3 frames */
     if (perf.time < 3 || perf.frames < 3) return;
@@ -812,7 +876,7 @@ export async function createBooth(host, opts = {}) {
     onFrame(fn) { listeners.push(fn); return () => { listeners = listeners.filter(f => f !== fn); }; },
     setAfterRender(fn) { afterRender = fn; },
     setMode(m) { mode = m; frameCamera(); settle(); },
-    setInset(r = 0, b = 0) { insetR = Math.max(0, r | 0); insetB = Math.max(0, b | 0); frameCamera(); },
+    setInset(r = 0, b = 0, t = 0) { insetR = Math.max(0, r | 0); insetB = Math.max(0, b | 0); insetT = Math.max(0, t | 0); frameCamera(); },
     /* paint shop: "target" or "gun" */
     setPreviewFocus(f) { if (previewFocus !== f) { previewFocus = f; frameCamera(); } },
     setAwning(ink) {
@@ -871,16 +935,19 @@ export async function createBooth(host, opts = {}) {
     preview(tid) {
       const h = who(gun.holder), t = who(tid);
       if (!h || !t) return;
+      if (previewT && previewT !== t) previewT.a.highlight(false);
       previewT = t;
+      t.a.highlight(true);
       if (t === h) { h.a.setPose("aimSelf"); h.a.feel("dread"); everyoneLook(headOf(h), h); }
       else {
-        h.a.setPose("aim", t.a.chestPoint(new THREE.Vector3())); h.a.feel("focus"); h.a.lookAt(headOf(t));
+        h.a.setPose("aim", t.a.aimPoint(new THREE.Vector3())); h.a.feel("focus"); h.a.lookAt(headOf(t));
         t.a.setPose("scared"); t.a.feel("scared"); t.a.lookAt(headOf(h));
         for (const c of cast) if (c !== h && c !== t && c.a.alive) { c.a.feel("nervous"); c.a.lookAt(headOf(t)); }
       }
       cockTarget = -.85; bulbMode = "dim";
     },
     unpreview() {
+      previewT?.a.highlight(false);
       previewT = null; cockTarget = 0;
       if (!pulling) { bulbMode = sweeping ? "chase" : "steady"; settle(); }
     },
@@ -902,6 +969,7 @@ export async function createBooth(host, opts = {}) {
       const sh = who(pid), t = who(tid);
       if (!sh || !t) return;
       pulling = true;
+      previewT?.a.highlight(false);
       previewT = null;
       cockTarget = -.85;
       if (sh === t) {
@@ -909,7 +977,7 @@ export async function createBooth(host, opts = {}) {
         for (const c of cast) if (c !== sh && c.a.alive) { c.a.feel("nervous"); c.a.setPose("nervous"); c.a.lookAt(headOf(sh)); }
         camFocus = headOf(sh);
       } else {
-        sh.a.setPose("aim", t.a.chestPoint(new THREE.Vector3())); sh.a.feel("focus"); sh.a.lookAt(headOf(t));
+        sh.a.setPose("aim", t.a.aimPoint(new THREE.Vector3())); sh.a.feel("focus"); sh.a.lookAt(headOf(t));
         t.a.setPose("scared"); t.a.feel("scared"); t.a.lookAt(headOf(sh));
         for (const c of cast) if (c !== sh && c !== t && c.a.alive) { c.a.feel("nervous"); c.a.lookAt(headOf(t)); }
         /* frame the shooter and the target together */
@@ -933,7 +1001,7 @@ export async function createBooth(host, opts = {}) {
         sh?.a.impulse("recoil");
         casing(gunHolder.position.clone(), vec(1, 0, 0));
         if (t) {
-          const hitAt = self ? headOf(t) : t.a.chestPoint(new THREE.Vector3());
+          const hitAt = self ? headOf(t) : t.a.aimPoint(new THREE.Vector3());
           if (shielded) {
             sparks(hitAt.add(vec(0, 0, .2)), 18);
             t.a.impulse("shudder"); t.a.feel("shock", 700, "relief");
@@ -978,7 +1046,43 @@ export async function createBooth(host, opts = {}) {
       for (const o of cast) if (o !== c && o.a.alive) { o.a.feel("hurt"); o.a.lookAt(headOf(c)); }
       activePid = pid; bulbMode = "full";
     },
-    /* where a target sits on screen, for the accessible hit buttons and tags */    /* where a target sits on screen, for the accessible hit buttons and tags */
+    /* which figure is under a screen point; falls back to the nearest one sideways */
+    pick(clientX, clientY, slack = 90) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const nx = (clientX - rect.left) / rect.width * 2 - 1, ny = -((clientY - rect.top) / rect.height) * 2 + 1;
+      ray.setFromCamera({ x: nx, y: ny }, camera);
+      const live = cast.filter(c => c.a.alive);
+      const hits = ray.intersectObjects(live.map(c => c.a.collider), false);
+      if (hits.length) return live.find(c => c.a.collider === hits[0].object).pid;
+      let best = null, bd = slack;
+      for (const c of live) {
+        const pt = c.a.headPoint(new THREE.Vector3()).project(camera);
+        const sx = (pt.x + 1) / 2 * rect.width + rect.left, sy = (1 - pt.y) / 2 * rect.height + rect.top;
+        const dx = Math.abs(sx - clientX), dy = clientY < sy - 60 ? sy - 60 - clientY : 0;
+        const dd = Math.hypot(dx, dy * .5);
+        if (dd < bd) { bd = dd; best = c.pid; }
+      }
+      return best;
+    },
+    /* where a target sits on screen, for the accessible hit buttons and tags */    /* which figure is under a screen point; falls back to the nearest one sideways */
+    pick(clientX, clientY, slack = 90) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const nx = (clientX - rect.left) / rect.width * 2 - 1, ny = -((clientY - rect.top) / rect.height) * 2 + 1;
+      ray.setFromCamera({ x: nx, y: ny }, camera);
+      const live = cast.filter(c => c.a.alive);
+      const hits = ray.intersectObjects(live.map(c => c.a.collider), false);
+      if (hits.length) return live.find(c => c.a.collider === hits[0].object).pid;
+      let best = null, bd = slack;
+      for (const c of live) {
+        const pt = c.a.headPoint(new THREE.Vector3()).project(camera);
+        const sx = (pt.x + 1) / 2 * rect.width + rect.left, sy = (1 - pt.y) / 2 * rect.height + rect.top;
+        const dx = Math.abs(sx - clientX), dy = clientY < sy - 60 ? sy - 60 - clientY : 0;
+        const dd = Math.hypot(dx, dy * .5);
+        if (dd < bd) { bd = dd; best = c.pid; }
+      }
+      return best;
+    },
+    /* where a target sits on screen, for the accessible hit buttons and tags */
     screenBox(pid) {
       const c = who(pid); if (!c) return null;
       const w = host.clientWidth, h = host.clientHeight;
@@ -990,6 +1094,7 @@ export async function createBooth(host, opts = {}) {
       return { x: cx - hw, y: y0, w: hw * 2, h: Math.max(40, y1 - y0), down: !c.a.alive };
     },
     pause(on) { running = !on; if (!on) clock.getDelta(); },
+    setGraphics,
     /* draw cost of the last frame, for performance checks */
     stats() {
       const r = renderer.info.render; let meshes = 0, castMeshes = 0, figMeshes = 0;
@@ -1003,5 +1108,6 @@ export async function createBooth(host, opts = {}) {
     }
   };
   setGun({ gun: 1, finish: 1 });
+  if (opts.graphics) setGraphics(opts.graphics);
   return stage;
 }

@@ -95,10 +95,13 @@ export function createAutomaton(p, opts = {}) {
   const bodyHex = paint(look.body), trimHex = paint(look.trim), plateHex = paint(look.plate);
   const body = enamel(bodyHex), trim = enamel(trimHex);
   const mats = [body, trim];
+  const porcelainLit = S.porcelain.clone(); porcelainLit.emissive.set(0xffd27a); porcelainLit.emissiveIntensity = .18;
   const B = BUILD[fig];
 
   const root = new THREE.Group(); root.name = "automaton";
-  const pelvis = joint(root, [0, B.hip, 0]);
+  /* the rig turns and steps as one body; root stays at the figure's mark */
+  const rig = joint(root, [0, 0, 0]);
+  const pelvis = joint(rig, [0, B.hip, 0]);
   const legLen = .42 * B.hip / .93;
   /* legs: mostly behind the counter, but they carry the slump */
   const legs = [];
@@ -317,6 +320,7 @@ export function createAutomaton(p, opts = {}) {
     spine: { pitch: { x: 0, v: 0 }, yaw: { x: 0, v: 0 }, roll: { x: 0, v: 0 } },
     head: { pitch: { x: 0, v: 0 }, yaw: { x: 0, v: 0 }, roll: { x: 0, v: 0 } },
     slump: { x: p.alive === false ? 1 : 0, v: 0 }, hop: { x: 0, v: 0 },
+    turn: { x: 0, v: 0 }, step: { x: 0, v: 0 },
     shield: false, cuffed: false, phase: Math.random() * 10, emoTimer: 0, emoAfter: null, gunSide: "R"
   };
   const spr = (s, t, k, d, dt) => { const a = (t - s.x) * k - s.v * d; s.v += a * dt; s.x += s.v * dt; };
@@ -383,6 +387,10 @@ export function createAutomaton(p, opts = {}) {
       st.emotion = name; st.emoTimer = ms / 1000; st.emoAfter = after;
     },
     lookAt(point) { st.lookPoint = point ? point.clone() : null; },
+    highlight(on) {
+      for (const m of mats) { m.emissive.set(on ? 0xffd27a : 0x000000); m.emissiveIntensity = on ? .22 : 0; }
+      S.porcelain.emissive && head.traverse(o => { if (o.isMesh && o.material === S.porcelain) o.material = on ? porcelainLit : S.porcelain; });
+    },
     impulse(kind) {
       if (kind === "hit") { st.spine.pitch.v -= 9; st.head.pitch.v -= 14; st.spine.roll.v += (Math.random() - .5) * 10; }
       else if (kind === "headhit") { st.head.roll.v += 26; st.head.pitch.v -= 10; st.spine.roll.v += 6; }
@@ -404,6 +412,8 @@ export function createAutomaton(p, opts = {}) {
     headPoint(out = new V3()) { return head.localToWorld(out.set(0, .16, .05)); },
     headTop(out = new V3()) { return head.localToWorld(out.set(0, fig === "ringmaster" ? .48 : fig === "duchess" ? .42 : .36, 0)); },
     chestPoint(out = new V3()) { return spine.localToWorld(out.set(0, .3, .2)); },
+    /* where a shot lands: between the eyes */
+    aimPoint(out = new V3()) { return head.localToWorld(out.set(0, .15, .1)); },
     templePoint(out = new V3()) { return head.localToWorld(out.set(-.19, .17, .02)); },
     gripPoint(out = new V3()) { return out.copy(gunGrip); },
     aimTarget(out = new V3()) { return out.copy(gunAim); },
@@ -429,10 +439,18 @@ export function createAutomaton(p, opts = {}) {
       const breathe = rm ? 0 : Math.sin(ph * 1.6) * .012;
       let pitchT = st.slump.x * .55 + (pose === "scared" ? -.1 : 0) + (pose === "relief" ? -.06 : 0);
       let yawT = 0, rollT = rm ? 0 : Math.sin(ph * .7) * .02;
-      if (pose === "aim" || pose === "hold") {
+      /* to shoot, step out of the line and square up to the target, so the arm
+         never passes through a neighbour */
+      let turnT = 0, stepT = 0;
+      if (pose === "aim") {
         root.worldToLocal(localPt.copy(st.aimPoint));
-        yawT = clamp(Math.atan2(localPt.x, localPt.z), -.9, .9) * .55;
-      }
+        turnT = clamp(Math.atan2(localPt.x, localPt.z), -1.35, 1.35);
+        stepT = .34;
+      } else if (pose === "aimSelf") stepT = .3;
+      else if (pose === "hold") stepT = .1;
+      spr(st.turn, turnT, 30, 9, dt); spr(st.step, stepT, 34, 10, dt);
+      rig.rotation.y = st.turn.x;
+      rig.position.z = st.step.x;
       if (pose === "aimSelf") { rollT = .1; pitchT += .04; }
       spr(st.spine.pitch, pitchT, 70, 11, dt); spr(st.spine.yaw, yawT, 50, 10, dt); spr(st.spine.roll, rollT, 70, 9, dt);
       spine.rotation.set(st.spine.pitch.x + breathe, st.spine.yaw.x, st.spine.roll.x);
@@ -445,8 +463,8 @@ export function createAutomaton(p, opts = {}) {
       root.updateMatrixWorld(true);
       if (st.lookPoint && st.alive) {
         neck.getWorldPosition(tmpW);
-        root.worldToLocal(localPt.copy(st.lookPoint));
-        root.worldToLocal(tmpW2.copy(tmpW));
+        rig.worldToLocal(localPt.copy(st.lookPoint));
+        rig.worldToLocal(tmpW2.copy(tmpW));
         localPt.sub(tmpW2);
         hy = clamp(Math.atan2(localPt.x, localPt.z), -1, 1) - st.spine.yaw.x;
         hp = -clamp(Math.atan2(localPt.y, Math.hypot(localPt.x, localPt.z)), -.45, .45);
@@ -459,10 +477,7 @@ export function createAutomaton(p, opts = {}) {
 
       /* hands: spring toward the pose's targets, then IK */
       root.updateMatrixWorld(true);
-      if (pose === "aim") {
-        root.worldToLocal(localPt.copy(st.aimPoint));
-        st.gunSide = localPt.x > .12 ? "L" : localPt.x < -.12 ? "R" : st.gunSide;
-      } else st.gunSide = "R";
+      st.gunSide = "R";
       for (const side of ["R", "L"]) {
         const arm = arms[side];
         let target;
@@ -471,9 +486,9 @@ export function createAutomaton(p, opts = {}) {
           /* arm straight out along the line to the target */
           arm.sh.getWorldPosition(tmpW);
           tmpW2.subVectors(st.aimPoint, tmpW).normalize().multiplyScalar((UPPER + FORE - .03) * root.getWorldScale(_sc).x).add(tmpW);
-          target = root.worldToLocal(tmpW2.clone());
+          target = rig.worldToLocal(tmpW2.clone());
         } else if (side === "R" && pose === "aimSelf") {
-          target = root.worldToLocal(api.templePoint(tmpW2).clone());
+          target = rig.worldToLocal(api.templePoint(tmpW2).clone());
         } else if (pose === "aim" && side !== st.gunSide) {
           target = side === "R" ? POSES.idle.R : POSES.idle.L;
         } else if (side === "L" && st.shield && st.alive) {
@@ -484,8 +499,8 @@ export function createAutomaton(p, opts = {}) {
         if (pose === "cheer" && !rm) target = target.clone().add(L(0, Math.sin(ph * 8) * .05, 0));
         if (!arm.init) { arm.p.copy(target); arm.init = true; }
         vspr(arm, target, rm ? 400 : 120, rm ? 40 : 15, dt);
-        const handW = root.localToWorld(tmpW.copy(arm.p));
-        const pole = tmpW2.set(arm.sx * .7, -.35, -.65).applyQuaternion(root.getWorldQuaternion(_qp)).normalize();
+        const handW = rig.localToWorld(tmpW.copy(arm.p));
+        const pole = tmpW2.set(arm.sx * .7, -.35, -.65).applyQuaternion(rig.getWorldQuaternion(_qp)).normalize();
         solveArm(arm, handW.clone(), pole.clone());
         arm.hand.updateMatrixWorld(true);
       }
@@ -508,8 +523,8 @@ export function createAutomaton(p, opts = {}) {
         arms[st.gunSide].hand.localToWorld(gunGrip.set(0, -.04, .02));
         if (pose === "aim") gunAim.copy(st.aimPoint);
         else if (pose === "aimSelf") api.headPoint(gunAim);
-        else if (pose === "present") root.localToWorld(gunAim.set(-1.6, 1.32, .55));   /* side-on, so the paint shop shows its profile */
-        else root.localToWorld(gunAim.set(-.1, .6, 1.4));
+        else if (pose === "present") rig.localToWorld(gunAim.set(-1.6, 1.32, .55));   /* side-on, so the paint shop shows its profile */
+        else rig.localToWorld(gunAim.set(-.1, .6, 1.4));
       }
 
       /* props: shield on the left hand, cuffs and their chain */
@@ -532,7 +547,10 @@ export function createAutomaton(p, opts = {}) {
         cuffChain.quaternion.setFromUnitVectors(new V3(0, 1, 0), b.clone().sub(a).normalize());
       }
     },
+    /* a hit volume for pointing: generous, so a thumb finds the figure */
+    collider: (() => { const m = new THREE.Mesh(new THREE.BoxGeometry(.72, 1.3, .6), new THREE.MeshBasicMaterial({ visible: false })); m.position.set(0, 1.48, 0); root.add(m); return m; })(),
     dispose() {
+      porcelainLit.dispose();
       root.traverse(o => { if (o.isMesh) o.geometry.dispose(); });
       for (const m of mats) m.dispose();
       plateTex.dispose();

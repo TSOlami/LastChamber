@@ -83,8 +83,9 @@ function roster(room) {
     t: "roster",
     code: room.code,
     players: seats.map(w => ({ name: w.lc.name, look: w.lc.look, host: w.lc.host || false, you: w === ws })),
+    waiting: [...room.clients].filter(w => w.lc.pending).map(w => w.lc.name),
     spectators: specs,
-    started: !!room.st
+    started: !!(room.st && !room.st.over)
   });
 }
 
@@ -112,7 +113,11 @@ function botPump(room) {
 
 function startGame(room, botCount, rules) {
   if (rules) room.rules = rules;
-  const seats = [...room.clients].filter(w => w.lc.role === "seat");
+  /* people who arrived mid-game take their seats now */
+  for (const w of room.clients) if (w.lc.pending) { w.lc.role = "seat"; w.lc.pending = false; }
+  let seats = [...room.clients].filter(w => w.lc.role === "seat");
+  if (seats.length > 6) { for (const w of seats.slice(6)) { w.lc.role = "spec"; w.lc.pending = true; } seats = seats.slice(0, 6); }
+  botCount = Math.max(seats.length < 2 ? 1 : 0, Math.min(6 - seats.length, botCount));
   const names = new Set(seats.map(w => w.lc.name));
   const botNames = E.BOT_NAMES.filter(n => !names.has(n)).sort(() => Math.random() - 0.5);
   const defs = [
@@ -180,14 +185,18 @@ wss.on("connection", ws => {
       case "join": {
         const r = rooms.get(String(m.code || "").toUpperCase().trim());
         if (!r) { send(ws, { t: "err", msg: "No table with that code." }); return; }
-        const seated = [...r.clients].filter(w => w.lc.role === "seat").length;
-        const wantSpec = m.spectate || r.st || seated >= 6;
+        const seated = [...r.clients].filter(w => w.lc.role === "seat" || w.lc.pending).length;
+        const live = r.st && !r.st.over;
+        /* a free seat is yours; mid-game you watch until the next deal, then you're in */
+        const full = seated >= 6;
+        const pending = !m.spectate && !full && !!live;
+        const wantSpec = m.spectate || full || live;
         if (room) leaveRoom(ws);
         const taken = [...r.clients].map(w => w.lc.name);
-        ws.lc = { name: seatName(m.name, taken), look: cleanLook(m.look), role: wantSpec ? "spec" : "seat", pid: null, host: false };
+        ws.lc = { name: seatName(m.name, taken), look: cleanLook(m.look), role: wantSpec ? "spec" : "seat", pending, pid: null, host: false };
         ws.lcRoom = r;
         r.clients.add(ws);
-        if (r.st) send(ws, { t: "begin", you: null, state: E.pub(r.st) });
+        if (live) send(ws, { t: "begin", you: null, pending, state: E.pub(r.st) });
         roster(r);
         break;
       }
@@ -216,8 +225,10 @@ wss.on("connection", ws => {
         if (!room || !ws.lc.host || !room.st || !room.st.over) return;
         room.st = null;
         for (const w of room.clients) w.lc.pid = null;
+        /* new arrivals replace bots first */
         const bots = room.defs.filter(d => d.bot).length;
-        startGame(room, bots);
+        const fresh = [...room.clients].filter(w => w.lc.pending).length;
+        startGame(room, Math.max(0, bots - fresh));
         break;
       }
       case "chat": {

@@ -112,7 +112,7 @@
   <div class="hud-top">
     <button class="icon-btn ticket-btn" id="hudMenu" aria-label="Menu" data-tip="Menu, settings, leave"><svg class="i"><use href="#i-menu"/></svg></button>
     <button class="icon-btn ticket-btn" id="hudSound" aria-label="Sound" aria-pressed="true" data-tip="Sound on or off"><svg class="i"><use href="#i-sound"/></svg></button>
-    <button class="code-chip hidden" id="hudCode" aria-label="Show the big code card"><span>Table</span><b id="hudCodeVal"></b></button>
+    <button class="code-chip hidden" id="hudCode" aria-label="Show the big code card"><span>Join</span><b id="hudCodeVal"></b><small id="hudCodeUrl"></small></button>
     <span class="watch-chip hidden" id="watchChip">Watching</span>
   </div>
   <aside class="tape" id="tape" aria-label="The ledger">
@@ -128,14 +128,16 @@
     <div class="stub" id="stub">
       <p class="stub-prompt" id="prompt">&nbsp;</p>
       <p class="stub-hint" id="hint"></p>
-      <div class="stub-meta"><span class="mylives" id="myLives"></span><span class="stub-count" id="counts"></span></div>
     </div>
+    <div class="bar-actions">
     <div class="items-wrap">
       <button class="item items-btn hidden" id="itemsBtn" aria-expanded="false" aria-controls="tray" data-tip="Tricks you can play before you shoot"><svg class="i" aria-hidden="true"><use href="#i-items"/></svg>Items <b id="itemsCount">0</b></button>
       <div class="tray hidden" id="tray" role="dialog" aria-label="Your items">
         <ul class="tray-list" id="hand"></ul>
         <p class="tray-note" id="trayNote"></p>
       </div>
+    </div>
+    <button class="item log-btn" id="logBtn" aria-expanded="false" aria-controls="ledger" aria-label="Game log"><svg class="i" aria-hidden="true"><use href="#i-tape"/></svg>Log</button>
     </div>
   </div>
 </section>
@@ -219,7 +221,6 @@
       <h2 id="paintTitle">Paint shop</h2>
       <button class="icon-btn" value="cancel" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
     </header>
-    <p class="sheet-lede">Make it yours. Looks only, it never changes your odds.</p>
     <div class="field">
       <label for="paintName">Name on the plate</label>
       <div class="name-row">
@@ -245,12 +246,12 @@
     </header>
     <fieldset class="choice"><legend>Booth canvas</legend><div class="tiles" id="oAwning"></div></fieldset>
     <label class="toggle" data-tip="Peeks stay hidden until you press and hold, and your table code stays on screen for viewers."><input type="checkbox" id="oStreamer"><span class="lever" aria-hidden="true"></span><span>Streamer mode</span></label>
+    <fieldset class="choice"><legend>Graphics</legend><div class="tiles" id="oGraphics"></div><p class="sub" id="oGraphicsNote"></p></fieldset>
     <fieldset class="choice"><legend>Motion</legend><div class="tiles" id="oMotion"></div></fieldset>
     <div class="field">
       <label for="oVolume">Volume</label>
       <input type="range" id="oVolume" min="0" max="100" step="5">
     </div>
-    <p class="sub" id="oPlayed"></p>
     <div class="actions"><button class="btn gold" value="done">Done</button></div>
   </form>
 </dialog>
@@ -303,12 +304,12 @@
       <button class="icon-btn" value="cancel" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
     </header>
     <ol class="rules-list">
-      <li><b>You know the count, not the order</b>Each round the gun gets some live shells and some blanks. Everyone sees how many. Nobody knows which comes next.</li>
-      <li><b>Press, hold, let go</b>Press and hold someone to aim at them, then let go to shoot. A live shell costs them a life. A blank does nothing.</li>
-      <li><b>Shoot yourself if you dare</b>If it's a blank, you get another turn. If it's live, ouch.</li>
-      <li><b>Last one standing wins</b>Items are optional tricks. Open your Items to see what they do.</li>
+      <li><b>The gun's got a mix in it</b>Some live rounds, some blanks. You can see how many of each. You just can't see which one's next.</li>
+      <li><b>Aim and fire</b>On your turn, press and hold on someone, then let go. Live? They lose a life. Blank? Nothing happens.</li>
+      <li><b>Feeling brave?</b>Point it at yourself. If it's a blank, you get to go again.</li>
+      <li><b>Last one standing wins</b>Got items? They're little tricks. Open Items to see what they do.</li>
     </ol>
-    <div class="actions"><button class="btn gold" value="done" id="rulesGo">Let's play</button></div>
+    <div class="actions"><button class="btn gold" value="done" id="rulesGo">Got it, let's play</button></div>
   </form>
 </dialog>
 
@@ -324,7 +325,7 @@
   </div>
 </dialog>
 
-<div class="dock hidden" id="codeDock" aria-hidden="true"><span>Join</span><b id="codeDockVal"></b><small id="codeDockUrl"></small></div>
+
 
 <script type="module" src="/js/app.mjs"></script>
 </body>

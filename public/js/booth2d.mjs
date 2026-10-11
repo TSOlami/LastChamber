@@ -17,7 +17,7 @@ export async function createBooth2D(host, opts = {}) {
   host.prepend(root);
   const css = document.createElement("style");
   css.textContent = `
-  .b2d{position:absolute;inset:0;overflow:hidden;background:var(--soot-deep)}
+  .b2d{position:absolute;inset:0;overflow:hidden;background:var(--soot-deep);touch-action:none;-webkit-user-select:none;user-select:none}
   .b2d .wall{position:absolute;inset:0;background:repeating-linear-gradient(90deg,var(--stripe) 0 6vw,var(--cream-deep) 6vw 12vw);filter:brightness(.38) saturate(.9)}
   .b2d .valance{position:absolute;left:-2%;right:-2%;top:0;height:9vh;background:repeating-linear-gradient(90deg,var(--stripe) 0 6vw,var(--cream) 6vw 12vw);
     -webkit-mask:radial-gradient(3vw 2.2vh at 3vw 0,#000 98%,transparent) 0 100%/6vw 100% repeat-x,linear-gradient(#000,#000) 0 0/100% 70% no-repeat;
@@ -178,6 +178,18 @@ export async function createBooth2D(host, opts = {}) {
     setAfterRender(fn) { afterRender = fn; },
     setMode(m) { mode = m; layout(); },
     setInset() {},
+    /* which figure is under a screen point, or the nearest one sideways */
+    pick(cx, cy, slack = 90) {
+      let best = null, bd = slack;
+      for (const t of targets) {
+        if (!t.alive) continue;
+        const r = t.el.getBoundingClientRect();
+        if (cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom) return t.pid;
+        const d = Math.abs(cx - (r.left + r.width / 2)) - r.width / 2;
+        if (d < bd && cy > r.top - 80) { bd = d; best = t.pid; }
+      }
+      return best;
+    },
     setPreviewFocus() {},
     setAwning(ink) { root.style.setProperty("--stripe", INKS[ink].base); },
     setSign: paintSign,
