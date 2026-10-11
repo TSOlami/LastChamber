@@ -183,6 +183,7 @@ export function useItem(st, pid, idx) {
       const n = st.players[nextAliveIdx(st, st.turn)];
       if (n.id !== pid) {
         n.cuffed = true;
+        st.lastCuffed = n.id;
         ev.push({ e: "item", pid, item: "cuffs", tid: n.id });
       } else {
         ev.push({ e: "item", pid, item: "cuffs", tid: null });
@@ -212,7 +213,9 @@ export function botMove(st) {
     return { a: "item", idx: has("eject") };
   if (known === true && liveN >= 2 && has("double") >= 0 && Math.random() < 0.6)
     return { a: "item", idx: has("double") };
-  if (has("cuffs") >= 0 && Math.random() < 0.3)
+  /* the house never cuffs the same player twice running */
+  const nextUp = st.players[nextAliveIdx(st, st.turn)];
+  if (has("cuffs") >= 0 && nextUp.id !== st.lastCuffed && !nextUp.cuffed && Math.random() < 0.3)
     return { a: "item", idx: has("cuffs") };
 
   const self = known === true ? false

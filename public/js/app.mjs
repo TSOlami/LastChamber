@@ -65,17 +65,28 @@ document.body.classList.toggle("stream", store.streamer);
 const AC = window.AudioContext || window.webkitAudioContext;
 let actx = null, bus = null, master = null, recDest = null;
 function audio() {
+  /* Safari: treat booth sound as media so the silent switch doesn't swallow it */
+  try { if (navigator.audioSession && navigator.audioSession.type !== "playback") navigator.audioSession.type = "playback"; } catch {}
   if (!actx) {
     actx = new AC();
     bus = actx.createDynamicsCompressor();
     bus.threshold.value = -18; bus.knee.value = 20; bus.ratio.value = 6;
     master = actx.createGain();
-    master.gain.value = store.volume / 100;
+    master.gain.value = ls.get("muted", false) ? 0 : store.volume / 100;
     bus.connect(master).connect(actx.destination);
     if (actx.createMediaStreamDestination) { recDest = actx.createMediaStreamDestination(); master.connect(recDest); }
   }
-  if (actx.state === "suspended") actx.resume();
+  if (actx.state === "suspended" || actx.state === "interrupted") actx.resume();
   return actx;
+}
+/* any first touch or key unlocks audio; coming back to the app resumes it */
+for (const ev of ["pointerdown", "keydown", "touchend"]) addEventListener(ev, () => audio(), { capture: true, passive: true });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && actx) actx.resume(); });
+function setMuted(m) {
+  ls.set("muted", m);
+  if (master) master.gain.value = m ? 0 : store.volume / 100;
+  const b = document.getElementById("hudSound");
+  if (b) { b.setAttribute("aria-pressed", String(!m)); b.querySelector("use").setAttribute("href", m ? "#i-mute" : "#i-sound"); b.dataset.tip = m ? "Sound is off" : "Sound is on"; }
 }
 function tone({ f = 440, type = "sine", g = .2, dur = .12, when = 0, fEnd = null }) {
   if (!actx) return;
@@ -171,6 +182,7 @@ const ui = {
   reel: null, roster: []
 };
 window.LC = ui;
+Object.defineProperty(ui, "stage", { get: () => stage });   /* debug: draw stats */
 
 const nameOf = pid => ui.pub?.players.find(p => p.id === pid)?.name || "?";
 const isYou = pid => pid === ui.you && !ui.spectating;
@@ -256,7 +268,7 @@ function buildHits() {
     b.className = "tbtn";
     b.id = "hit" + p.id;
     b.tabIndex = -1;
-    b.innerHTML = `<span class="youmark" aria-hidden="true">You</span><span class="aim"><svg class="i"><use href="#i-sight"/></svg><span class="charge" aria-hidden="true"></span><span class="aim-t"></span></span><span class="ttag"></span>`;
+    b.innerHTML = `<span class="outmark" aria-hidden="true">Out</span><span class="youmark" aria-hidden="true">You</span><span class="aim"><svg class="i"><use href="#i-sight"/></svg><span class="charge" aria-hidden="true"></span><span class="aim-t"></span></span><span class="ttag"></span>`;
     wireTarget(b, p.id);
     layer.appendChild(b);
   }
@@ -268,23 +280,24 @@ function buildHits() {
    Space. Assistive tech that sends a plain click aims first, then pulls. */
 const HOLD_MS = 320;
 let aimS = null, pressing = false;
-const idleAimText = pid => `Hold to aim at ${isYou(pid) ? "yourself" : ui.pub?.players.find(q => q.id === pid)?.name}`;
+const idleAimText = pid => isYou(pid) ? "Shoot yourself?" : `Aim at ${ui.pub?.players.find(q => q.id === pid)?.name}`;
 /* arming is measured from the input events' own timestamps, so a busy page can't turn a tap into a pull */
 function startAim(tid, el, at = performance.now()) {
   if (!ui.canAct || aimS?.tid === tid) return;
+  endCoach(true);
   endAim();
   if (ui.selItem != null) { ui.selItem = null; renderHand(); }
   aimS = { tid, el, armed: false, t0: at };
   el.style.setProperty("--hold", HOLD_MS + "ms");
   el.classList.add("aiming");
-  el.querySelector(".aim-t").textContent = `Aiming at ${isYou(tid) ? "yourself" : ui.pub.players.find(q => q.id === tid)?.name}`;
+  el.querySelector(".aim-t").textContent = `Aiming at ${isYou(tid) ? "yourself" : ui.pub.players.find(q => q.id === tid)?.name}...`;
   stage.preview(tid);
   sCock();
   aimS.timer = setTimeout(() => {
     if (!aimS || aimS.tid !== tid) return;
     aimS.armed = true;
     el.classList.add("armed");
-    el.querySelector(".aim-t").textContent = "Let go to pull";
+    el.querySelector(".aim-t").textContent = "Let go to shoot!";
   }, HOLD_MS);
 }
 function endAim() {
@@ -299,7 +312,7 @@ function releaseAim(at = performance.now()) {
   const { tid, t0 } = aimS;
   endAim();
   if (at - t0 >= HOLD_MS) humanShoot(tid);
-  else { stage.unpreview(); $("#hint").textContent = "Keep holding until the ring fills, then let go."; }
+  else { stage.unpreview(); $("#hint").textContent = "Hold a little longer, then let go."; }
 }
 function cancelAim() { if (!aimS) return; endAim(); stage.unpreview(); }
 function wireTarget(b, pid) {
@@ -324,7 +337,7 @@ function wireTarget(b, pid) {
     if (ui.a11yAim === pid) { ui.a11yAim = null; humanShoot(pid); return; }
     ui.a11yAim = pid;
     stage.preview(pid);
-    announce(`Aimed at ${isYou(pid) ? "yourself" : ui.pub.players.find(q => q.id === pid)?.name}. Activate again to pull, or press Escape to back out.`);
+    announce(`Aiming at ${isYou(pid) ? "yourself" : ui.pub.players.find(q => q.id === pid)?.name}. Activate again to shoot, or press Escape to back out.`);
   });
   b.addEventListener("contextmenu", e => e.preventDefault());
 }
@@ -356,7 +369,10 @@ function placeCoach() {
   const o = opp.getBoundingClientRect();
   Object.assign($("#coachHand").style, { left: (o.left + o.width / 2) + "px", top: (o.top + o.height * .42) + "px" });
   const card = $("#coachCard"), ch = card.offsetHeight;
-  card.style.top = (y1 + 14 + ch < innerHeight - 12 ? y1 + 14 : Math.max(12, y0 - ch - 14)) + "px";
+  /* phones: above the rail so the gun and your controls stay clear; wide screens: below it */
+  const above = Math.max(12, y0 - ch - 14), below = y1 + 14;
+  const portrait = innerWidth < innerHeight;
+  card.style.top = (portrait ? (y0 - ch - 14 >= 12 ? above : below) : (below + ch < innerHeight - 12 ? below : above)) + "px";
 }
 $("#coachSkip").onclick = () => endCoach(true);
 
@@ -386,14 +402,14 @@ function renderTags() {
     const tag = el.querySelector(".ttag");
     el.classList.toggle("is-you", isYou(p.id) && p.alive);
     const icons = [];
-    if (!p.alive) icons.push(`<span class="out">Out</span>`);
+    el.classList.toggle("is-out", !p.alive);
     if (p.shield) icons.push(`<svg class="i state" aria-hidden="true"><use href="#i-shield"/></svg>`);
     if (p.cuffed) icons.push(`<svg class="i state" aria-hidden="true"><use href="#i-cuffs"/></svg>`);
     if (!isYou(p.id)) {
-      /* a crowded phone rail gets one ticket with the count; the button's label lists them */
-      if (innerWidth < 761 && ui.pub.players.length > 3) {
-        if (p.items.length) icons.push(`<span class="tcount" aria-hidden="true"><svg class="i"><use href="#i-tape"/></svg>${p.items.length}</span>`);
-      } else p.items.forEach(k => icons.push(`<svg class="i" aria-hidden="true"><use href="#${ICON[k]}"/></svg>`));
+      /* what they're holding, as the item's own icon; crowded phone rails show fewer plus a count */
+      const room = innerWidth < 761 ? (ui.pub.players.length > 4 ? 1 : 2) : 4;
+      p.items.slice(0, room).forEach(k => icons.push(`<svg class="i" aria-hidden="true"><use href="#${ICON[k]}"/></svg>`));
+      if (p.items.length > room) icons.push(`<span class="more" aria-hidden="true">+${p.items.length - room}</span>`);
     }
     tag.innerHTML = icons.join("");
     const cap = ui.pub.rules?.lives ?? 3;
@@ -432,40 +448,69 @@ function renderState() {
 function syncCounts() {
   const pub = ui.pub;
   $("#counts").innerHTML = pub?.round ? `<span class="live">${pub.live} live</span> · ${pub.blank} blank left` : "";
+  const me = !ui.spectating && ui.you != null ? pub?.players.find(p => p.id === ui.you) : null;
+  const cap = pub?.rules?.lives ?? 3;
+  $("#myLives").innerHTML = me ? `<span class="you-l">You</span>${Array.from({ length: cap }, (_, i) =>
+    i < me.lives
+      ? `<svg class="pip on" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 1.5l2.5 5.6 6.1.6-4.6 4.1 1.3 6-5.3-3.1-5.3 3.1 1.3-6-4.6-4.1 6.1-.6z"/></svg>`
+      : `<svg class="pip off" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="11" r="5"/></svg>`).join("")}` : "";
+  $("#myLives").setAttribute("aria-label", me ? `You have ${me.lives} of ${cap} lives` : "");
 }
 function renderHand() {
-  const wrap = $("#hand");
-  wrap.innerHTML = "";
+  const list = $("#hand"), btn = $("#itemsBtn");
+  list.innerHTML = "";
   const me = ui.spectating || ui.you == null ? null : ui.pub?.players.find(p => p.id === ui.you);
-  if (!me) return;
+  const n = me?.items.length || 0;
+  btn.classList.toggle("hidden", !me || !n || !!ui.pub?.over);
+  $("#itemsCount").textContent = n;
+  btn.setAttribute("aria-label", `Items, ${n}`);
+  if (!n) { closeTray(); return; }
   me.items.forEach((k, idx) => {
-    const b = document.createElement("button");
-    b.className = "item";
-    b.dataset.tip = E.ITEMS[k].desc;
-    b.setAttribute("aria-label", `${E.ITEMS[k].name}: ${E.ITEMS[k].desc}`);
-    b.innerHTML = `<svg class="i" aria-hidden="true"><use href="#${ICON[k]}"/></svg>${E.ITEMS[k].name}`;
-    b.disabled = !ui.canAct;
-    b.classList.toggle("selected", ui.selItem === idx);
-    b.setAttribute("aria-pressed", ui.selItem === idx);
-    b.addEventListener("click", () => itemTap(idx));
-    wrap.appendChild(b);
+    const li = document.createElement("li");
+    li.className = "tray-item";
+    li.innerHTML = `<svg class="i" aria-hidden="true"><use href="#${ICON[k]}"/></svg><span class="tray-text"><b>${E.ITEMS[k].name}</b><span>${E.ITEMS[k].desc}.</span></span>`;
+    const use = document.createElement("button");
+    use.className = "btn small use";
+    use.textContent = "Use";
+    use.disabled = !ui.canAct;
+    use.setAttribute("aria-label", `Use ${E.ITEMS[k].name}`);
+    use.addEventListener("click", () => { closeTray(); humanItem(idx); });
+    li.appendChild(use);
+    list.appendChild(li);
   });
+  $("#trayNote").textContent = ui.canAct ? "" : "You can use these on your turn.";
 }
-const TURN_HINT = "A blank on yourself keeps the gun in your hand.";
-function itemTap(idx) {
-  if (!ui.canAct) return;
-  if (ui.selItem === idx) { ui.selItem = null; humanItem(idx); return; }
+function openTray() {
   cancelAim();
-  ui.selItem = idx;
-  renderHand();
-  const k = ui.pub.players.find(p => p.id === ui.you)?.items[idx];
-  if (!k) return;
-  $("#hint").textContent = `${E.ITEMS[k].name}: ${E.ITEMS[k].desc}. Tap it again to use it.`;
-  announce(`${E.ITEMS[k].name}: ${E.ITEMS[k].desc}. Activate again to use it.`);
+  $("#tray").classList.remove("hidden");
+  $("#itemsBtn").setAttribute("aria-expanded", "true");
+  $("#tray").querySelector(".use:not([disabled])")?.focus({ preventScroll: true });
 }
+function closeTray() {
+  $("#tray").classList.add("hidden");
+  $("#itemsBtn").setAttribute("aria-expanded", "false");
+}
+$("#itemsBtn").onclick = () => $("#tray").classList.contains("hidden") ? openTray() : closeTray();
+document.addEventListener("pointerdown", e => { if (!e.target.closest(".items-wrap")) closeTray(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#tray").classList.contains("hidden")) { closeTray(); $("#itemsBtn").focus(); } });
+const TURN_HINT = "Shoot yourself and hit a blank? You go again.";
 function setPrompt(html, hint = "") {
   $("#prompt").innerHTML = html || "&nbsp;";
   $("#hint").textContent = hint;
+}
+function hitStamp(pid, dmg) {
+  const el = document.getElementById("hit" + pid);
+  if (!el) return;
+  const s = document.createElement("span");
+  s.className = "minus";
+  s.textContent = dmg === 2 ? "−2" : "−1";
+  el.appendChild(s);
+  setTimeout(() => s.remove(), 1600);
+  if (!reduced()) {
+    $("#game").animate([{ transform: "translate(0,0)" }, { transform: "translate(-6px,3px)" }, { transform: "translate(5px,-3px)" }, { transform: "translate(-3px,2px)" }, { transform: "translate(0,0)" }], { duration: 320 });
+    navigator.vibrate?.(140);
+  }
+  announce(`You got hit. ${dmg === 2 ? "Two lives" : "One life"} gone.`);
 }
 function stamp(kind) {
   const s = $("#stamp");
@@ -508,7 +553,7 @@ async function animate(ev) {
     case "round": {
       pub.round = ev.round; pub.live = ev.live; pub.blank = ev.blank;
       if (ui.st) ui.pub = E.pub(ui.st);
-      log(`Round ${ev.round}. The barker racks <b>${ev.live} live</b> and <b>${ev.blank} blank</b>, then spins the cylinder.`, "sys");
+      log(`Round ${ev.round}: <b>${ev.live} live</b>, <b>${ev.blank} blank</b>. Spinning the cylinder...`, "sys");
       sSpin();
       stage.round(ev.round, ev.live, ev.blank);
       syncCounts(); renderTags(); renderHand();
@@ -524,16 +569,16 @@ async function animate(ev) {
         if (ui.gunAt != null) sSlide();
         ui.gunAt = ev.pid;
         await stage.giveGun(ev.pid, lookOf(p), true);
+        /* a beat on the new holder only when the gun changes hands, never for your own turn */
+        if (!isYou(ev.pid) && !ui.fast) await stage.beat(ev.pid, 550);
       }
-      /* a beat on whoever holds the gun, unless it's you and the controls are about to arrive */
-      if (!isYou(ev.pid) && !ui.fast) await stage.beat(ev.pid, 650);
       if (ui.reel) ui.reel.holder = ev.pid;
       break;
     }
     case "skip": {
       const p = pub.players.find(q => q.id === ev.pid);
       if (p) p.cuffed = false;
-      log(`<b>${N(ev.pid)}</b> ${V(ev.pid, "sits", "sit")} this one out, cuffed.`);
+      log(`<b>${N(ev.pid)}</b> ${V(ev.pid, "is", "are")} cuffed and ${V(ev.pid, "misses", "miss")} a turn.`);
       renderState();
       await delay(700);
       break;
@@ -545,8 +590,8 @@ async function animate(ev) {
       const before = snapPlayers(pub);
       const self = ev.pid === ev.tid;
       const aimLine = self
-        ? `<b>${N(ev.pid)}</b> ${V(ev.pid, "pulls", "pull")} on ${V(ev.pid, "themself", "yourself")}.`
-        : `<b>${N(ev.pid)}</b> ${V(ev.pid, "pulls", "pull")} on <b>${No(ev.tid)}</b>.`;
+        ? `<b>${N(ev.pid)}</b> ${V(ev.pid, "aims", "aim")} at ${V(ev.pid, "themself", "yourself")}...`
+        : `<b>${N(ev.pid)}</b> ${V(ev.pid, "aims", "aim")} at <b>${No(ev.tid)}</b>...`;
       setPrompt(aimLine, "");
       log(aimLine);
       sCock(); sHeart();
@@ -559,23 +604,24 @@ async function animate(ev) {
         if (!ev.shielded) setTimeout(sClang, 60);
         if (ev.shielded) {
           t.shield = false;
-          log(`<b>Live.</b> ${Np(t.id)} shield takes the hit.`, "hit");
+          log(`<b>BANG!</b> ${Np(t.id)} shield takes it.`, "hit");
         } else {
           t.lives = Math.max(0, t.lives - ev.dmg);
-          log(`<b>Live.</b> ${N(t.id)} ${V(t.id, "goes", "go")} down and ${V(t.id, "loses", "lose")} ${ev.dmg === 2 ? "two lives" : "a life"}.`, "hit");
+          log(`<b>BANG!</b> ${N(t.id)} ${V(t.id, "loses", "lose")} ${ev.dmg === 2 ? "two lives" : "a life"}.`, "hit");
+          if (isYou(t.id) && !ui.spectating) hitStamp(t.id, ev.dmg);
           if (ev.killed) {
             t.alive = false;
             if (isYou(t.id) && ui.mode !== "hot" && !ui.spectating) ui.outPending = true;
             setTimeout(sThud, 380);
-            log(`<b>${N(t.id)}</b> ${V(t.id, "stays", "stay")} down. Out for the night.`, "hit");
+            log(`<b>${N(t.id)}</b> ${V(t.id, "is", "are")} out!`, "hit");
           }
         }
         if (ui.reel) ui.reel.stats.live++;
       } else {
         pub.blank = Math.max(0, pub.blank - 1);
         sClick(); sPuff(); stamp("click");
-        log(`Click. Blank.`, "safe");
-        if (ev.keep) log(`<b>${N(ev.pid)}</b> ${V(ev.pid, "keeps", "keep")} the gun.`, "sys");
+        log(`Click. Blank!`, "safe");
+        if (ev.keep) log(`<b>${N(ev.pid)}</b> ${V(ev.pid, "goes", "go")} again.`, "safe");
         if (ui.reel) { ui.reel.stats.blank++; if (ev.keep) ui.reel.stats.selfKeep++; }
       }
       stage.update(pub);
@@ -603,7 +649,7 @@ async function animateItem(ev) {
   const v = (third, second) => V(ev.pid, third, second);
   switch (ev.item) {
     case "peek":
-      log(`${n} ${v("steals", "steal")} a look at the next shell.`);
+      log(`${n} ${v("sneaks", "sneak")} a peek at the next shell.`);
       if (isYou(ev.pid) && ui.pendingPeek != null) { await showPeek(ui.pendingPeek); ui.pendingPeek = null; }
       break;
     case "eject": {
@@ -613,13 +659,13 @@ async function animateItem(ev) {
       log(`${n} ${v("ejects", "eject")} the next shell. It was ${ev.live ? "<b>live</b>" : "a blank"}.`, ev.live ? "hit" : "safe");
       break;
     }
-    case "spin": sSpin(); stage.spin(); log(`${n} ${v("gives", "give")} the cylinder a spin.`); break;
-    case "shield": if (p) p.shield = true; log(`${n} ${v("raises", "raise")} a tin shield.`); break;
+    case "spin": sSpin(); stage.spin(); log(`${n} ${v("spins", "spin")} the cylinder.`); break;
+    case "shield": if (p) p.shield = true; log(`${n} ${v("puts", "put")} up a shield.`); break;
     case "flask":
       if (p && ev.gained) p.lives = Math.min(ui.pub.rules?.lives ?? 3, p.lives + 1);
       log(ev.gained ? `${n} ${v("takes", "take")} a pull from the flask. One life back.` : `${n} ${v("drinks", "drink")}. Nothing to gain.`, ev.gained ? "safe" : "");
       break;
-    case "double": log(`${n} ${v("loads", "load")} a hot round. The next live shell hits twice.`, "hit"); break;
+    case "double": log(`${n} ${v("loads", "load")} a double. The next live shell takes two lives.`, "hit"); break;
     case "cuffs":
       if (ev.tid != null) {
         const t = ui.pub.players.find(q => q.id === ev.tid);
@@ -666,7 +712,7 @@ function afterQueue() {
   if (pub.over) { ui.outPending = false; gameOver(); return; }
   if (ui.outPending) {
     ui.outPending = false;
-    $("#outAgain").textContent = ui.mode === "online" ? "Leave the table" : "Deal again";
+    $("#outAgain").textContent = ui.mode === "online" ? "Leave the table" : "Play again";
     $("#outDlg").showModal();
   }
   const cur = pub.players.find(p => p.id === pub.turn);
@@ -680,7 +726,7 @@ function afterQueue() {
   if (cur.bot) {
     waitPrompt(cur);
     clearTimeout(ui.botTimer);
-    ui.botTimer = setTimeout(botStep, ui.fast ? 200 : 1500 + rnd(900));
+    ui.botTimer = setTimeout(botStep, ui.fast ? 200 : 600 + rnd(400));
   } else if (ui.mode === "hot" && cur.id !== ui.you) {
     setPrompt("&nbsp;");
     setTargets(false);
@@ -702,13 +748,14 @@ function enableInput() {
   ui.canAct = true;
   ui.selItem = null; ui.a11yAim = null;
   const me = ui.pub.players.find(p => p.id === ui.you);
-  setPrompt(`<b>Your turn${ui.mode === "hot" && me ? ", " + esc(me.name) : ""}.</b> Hold a target, let go to pull.`, TURN_HINT);
+  const willCoach = !ls.get("taught", false) && !ui.spectating;
+  setPrompt(`<b>Your turn${ui.mode === "hot" && me ? ", " + esc(me.name) : ""}!</b> Press and hold someone to aim, let go to shoot.`, willCoach ? "" : TURN_HINT);
   $("#stub").classList.remove("yours"); void $("#stub").offsetWidth; $("#stub").classList.add("yours");
   stage.setBulbs("chase");
   stage.sweep(true);
   setTargets(true);
   renderHand();
-  announce(`Your turn. Hold a target to aim, let go to pull. ${ui.pub.live} live and ${ui.pub.blank} blank left.`);
+  announce(`Your turn! Press and hold someone to aim, let go to shoot. ${ui.pub.live} live and ${ui.pub.blank} blank left.`);
   maybeCoach();
   const first = $(".tbtn.targetable");
   if (first && document.activeElement === document.body) first.focus({ preventScroll: true });
@@ -718,8 +765,8 @@ function waitPrompt(cur) {
   cancelAim();
   stage.sweep(false);
   stage.setBulbs("steady");
-  setPrompt(cur.bot ? `<b>${esc(cur.name)}</b> is choosing a target.` : `Waiting on <b>${esc(cur.name)}</b>.`,
-    ui.spectating ? "You're watching this table." : "");
+  setPrompt(cur.bot ? `<b>${esc(cur.name)}</b> is thinking...` : `Waiting for <b>${esc(cur.name)}</b>...`,
+    ui.spectating ? "You're watching this one." : "");
   setTargets(false);
   renderHand();
 }
@@ -757,6 +804,12 @@ function humanItem(idx) {
 }
 
 $("#outWatch").onclick = () => $("#outDlg").close();
+function syncHurry() {
+  const b = $("#tmHurry");
+  b.setAttribute("aria-pressed", String(!!ui.fast));
+  b.textContent = ui.fast ? "Bots at normal speed" : "Speed up the bots";
+}
+$("#tmHurry").onclick = () => { ui.fast = !ui.fast; ls.set("hurry", ui.fast); syncHurry(); };
 $("#outFast").onclick = () => {
   ui.fast = true;
   $("#outDlg").close();
@@ -772,13 +825,13 @@ $("#outAgain").onclick = () => {
 
 /* ---------------- starting a table ---------------- */
 const WORD = ["", "One", "Two", "Three", "Four", "Five"];
-const livesLine = (n, lives) => `${n} targets on the rail. ${WORD[lives] || lives} ${lives === 1 ? "life" : "lives"} each.`;
+const livesLine = (n, lives) => `${n} players, ${lives} ${lives === 1 ? "life" : "lives"} each. Good luck!`;
 
 function enterTable(pub) {
   ui.pub = pub;
   ui.gunAt = null;
   ui.counted = false;
-  ui.fast = false; ui.outPending = false;
+  ui.fast = ls.get("hurry", false); ui.outPending = false;
   $("#ledger").innerHTML = "";
   $("#tape").classList.remove("open");
   closeAll();
@@ -830,7 +883,8 @@ function tiles(el, name, options, value, onChange) {
   options.forEach(o => {
     const lab = document.createElement("label");
     lab.className = "tile";
-    lab.innerHTML = `<input type="radio" name="${name}" value="${o.value}" ${o.value === value ? "checked" : ""} ${o.disabled ? "disabled" : ""}><span>${o.label}${o.sub ? `<small>${o.sub}</small>` : ""}</span>`;
+    lab.innerHTML = `<input type="radio" name="${name}" value="${o.value}" ${o.value === value ? "checked" : ""} ${o.disabled ? "disabled" : ""}><span>${o.disabled ? '<svg class="i" aria-hidden="true"><use href="#i-lock"/></svg> ' : ""}${o.label}</span>`;
+    if (o.tip) { lab.dataset.tip = o.tip; lab.querySelector("input").setAttribute("aria-description", o.tip); }
     lab.querySelector("input").onchange = () => onChange(o.value);
     el.appendChild(lab);
   });
@@ -838,17 +892,17 @@ function tiles(el, name, options, value, onChange) {
 function rulesBlock(el) {
   const r = store.rules;
   el.innerHTML = `
-    <div class="field-row"><span class="field-label" id="rLivesL">Lives each</span><div id="rLives" aria-labelledby="rLivesL"></div></div>
-    <div class="field-row"><span class="field-label" id="rItemsL">Items each round</span><div id="rItems" aria-labelledby="rItemsL"></div></div>
-    <fieldset class="choice"><legend>Chamber heat</legend><div class="tiles" id="rHeat"></div></fieldset>`;
+    <div class="field-row"><span class="field-label" id="rLivesL">Lives</span><div id="rLives" aria-labelledby="rLivesL"></div></div>
+    <div class="field-row"><span class="field-label" id="rItemsL">Items per round</span><div id="rItems" aria-labelledby="rItemsL"></div></div>
+    <fieldset class="choice"><legend>How many live shells</legend><div class="tiles" id="rHeat"></div></fieldset>`;
   const save = () => { store.rules = r; };
   stepper(el.querySelector("#rLives"), { min: 2, max: 5, value: r.lives, label: "lives", onChange: v => { r.lives = v; save(); } });
   stepper(el.querySelector("#rItems"), { min: 0, max: 3, value: r.itemsPerDeal, label: "items", onChange: v => { r.itemsPerDeal = v; save(); } });
   tiles(el.querySelector("#rHeat"), "heat", [
-    { value: 0, label: "Calm", sub: "fewer live" }, { value: 1, label: "Standard" }, { value: 2, label: "Reckless", sub: "more live" }
+    { value: 0, label: "Calm", tip: "Fewer live shells. A gentler game." }, { value: 1, label: "Standard", tip: "The usual mix." }, { value: 2, label: "Reckless", tip: "More live shells. Things go bang a lot." }
   ], r.heat, v => { r.heat = v; save(); });
 }
-function nameField(id, value, label = "Your name at the table") {
+function nameField(id, value, label = "Your name") {
   return `<div class="field"><label for="${id}">${label}</label><div class="name-row">
     <input id="${id}" maxlength="16" spellcheck="false" autocomplete="nickname" value="${esc(value)}">
     <button type="button" class="icon-btn" data-dice="${id}" aria-label="Roll a new name" data-tip="Roll a new name"><svg class="i"><use href="#i-dice"/></svg></button></div></div>`;
@@ -869,10 +923,10 @@ function openSetup(kind) {
   $("#setupErr").textContent = "";
   const titles = { solo: "Solo", hot: "Hot seat", online: "Open a table" };
   $("#setupTitle").textContent = titles[kind];
-  $("#setupGo").textContent = kind === "online" ? "Open the table" : "Deal";
+  $("#setupGo").textContent = kind === "online" ? "Open the table" : "Let's go";
   if (kind === "solo") {
     f.innerHTML = nameField("sName", store.name) +
-      `<div class="field-row"><span class="field-label" id="sBotsL">House players</span><div id="sBots" aria-labelledby="sBotsL"></div></div><div class="rules" id="sRules"></div>`;
+      `<details class="house"><summary>Table rules</summary><div class="field-row"><span class="field-label" id="sBotsL">Bots</span><div id="sBots" aria-labelledby="sBotsL"></div></div><div class="rules" id="sRules"></div></details>`;
     const bots = stepper(f.querySelector("#sBots"), { min: 1, max: 5, value: ls.get("soloBots", 3), label: "house players", onChange: v => ls.set("soloBots", v) });
     rulesBlock(f.querySelector("#sRules"));
     dlg.onclose = () => {
@@ -887,7 +941,7 @@ function openSetup(kind) {
   } else if (kind === "hot") {
     f.innerHTML = `<div class="field-row"><span class="field-label" id="hCountL">Players at the device</span><div id="hCount" aria-labelledby="hCountL"></div></div>
       <div id="hNames"></div>
-      <div class="field-row"><span class="field-label" id="hBotsL">House players</span><div id="hBots" aria-labelledby="hBotsL"></div></div><div class="rules" id="hRules"></div>`;
+      <details class="house"><summary>Table rules</summary><div class="field-row"><span class="field-label" id="hBotsL">Bots</span><div id="hBots" aria-labelledby="hBotsL"></div></div><div class="rules" id="hRules"></div></details>`;
     let names = ls.get("hotNames", []);
     const drawNames = n => {
       const box = f.querySelector("#hNames");
@@ -1012,7 +1066,7 @@ function connect(onOpen) {
         ui.queue.length = 0; ui.anim = false;
         enterTable(m.state);
         log(livesLine(m.state.players.length, m.state.rules?.lives ?? 3), "sys");
-        if (ui.spectating) log("You're watching this table.", "sys");
+        if (ui.spectating) log("You're watching this one.", "sys");
         if (m.state.turn != null) { stage.setActive(m.state.turn); ui.gunAt = m.state.turn;
           stage.giveGun(m.state.turn, lookOf(m.state.players.find(p => p.id === m.state.turn)), false); }
         if (m.state.round) stage.counts(m.state.round, m.state.live, m.state.blank);
@@ -1100,6 +1154,23 @@ function syncDock() {
 }
 
 /* ---------------- end of the night ---------------- */
+/* your night in a line and a few numbers */
+const ORD = n => n + (["th", "st", "nd", "rd"][(n % 100 - 20) % 10] || ["th", "st", "nd", "rd"][n % 100] || "th");
+function myNight(pub, w) {
+  const R = ui.reel, moms = R?.moments || [];
+  if (ui.spectating || ui.you == null) return { line: `${pub.round} rounds played.`, facts: [["Rounds", pub.round], ["Shots fired", moms.length]] };
+  const me = ui.you, total = pub.players.length;
+  const outs = moms.filter(m => m.ev.killed).map(m => m.ev.tid);
+  const myOut = moms.find(m => m.ev.killed && m.ev.tid === me);
+  const shots = moms.filter(m => m.ev.pid === me);
+  const hits = shots.filter(m => m.ev.live && m.ev.tid !== me && !m.ev.shielded).length;
+  const again = shots.filter(m => m.ev.keep).length;
+  let line;
+  if (w && w.id === me) line = `Last one standing after ${pub.round} ${pub.round === 1 ? "round" : "rounds"}. Nice nerves.`;
+  else if (myOut) line = `You finished ${ORD(total - outs.indexOf(me))}, knocked out in round ${myOut.round}.`;
+  else line = `${pub.round} rounds played.`;
+  return { line, facts: [["Your shots", shots.length], ["Hits you landed", hits], ["Times you went again", again], ["Rounds", pub.round]] };
+}
 function gameOver() {
   if (!ui.counted) { ui.counted = true; store.games++; sWin(); }
   const pub = ui.pub;
@@ -1108,18 +1179,19 @@ function gameOver() {
   stage.sweep(false);
   stage.cheer(w?.id);
   setTargets(false);
-  setPrompt(!w ? "Nobody's left standing." : isYou(w.id) ? "<b>You take the prize.</b>" : `<b>${esc(w.name)}</b> takes the prize.`);
-  $("#overTitle").textContent = !w ? "Nobody takes the prize" : isYou(w.id) ? "You take the prize" : `${w.name} takes the prize`;
-  const s = ui.reel?.stats || { live: 0, blank: 0, selfKeep: 0 };
-  $("#overFacts").innerHTML = [
-    ["Rounds", pub.round], ["Live rounds fired", s.live], ["Blanks survived", s.blank], ["Kept the gun on a blank", s.selfKeep]
-  ].map(([k, v]) => `<li><span>${k}</span><span>${v}</span></li>`).join("");
+  setPrompt(!w ? "Nobody's left standing." : isYou(w.id) ? "<b>You win!</b>" : `<b>${esc(w.name)}</b> wins!`);
+  $("#overTitle").textContent = !w ? "Nobody wins this one" : isYou(w.id) ? "You win!" : `${w.name} wins!`;
+  const mine = myNight(pub, w);
+  $("#overLine").textContent = mine.line;
+  $("#overFacts").innerHTML = mine.facts.map(([k, v]) => `<li><span>${k}</span><span>${v}</span></li>`).join("");
   const canRec = stage.kind === "3d" && typeof MediaRecorder !== "undefined" && !!stage.canvas.captureStream;
   $("#reelSave").disabled = !canRec || !ui.reel?.moments.length;
   $("#reelPlay").disabled = !ui.reel?.moments.length;
   $("#reelNote").textContent = canRec ? "" : "Saving clips isn't available on this device. The replay still plays.";
   $("#againBtn").classList.toggle("hidden", ui.mode === "online" && !ui.host);
-  setTimeout(() => { if (ui.pub?.over && !document.body.classList.contains("replaying")) $("#overDlg").showModal(); }, reduced() ? 300 : 1600);
+  closeTray();
+  /* let the winner's cheer play before the card comes up */
+  setTimeout(() => { if (ui.pub?.over && !document.body.classList.contains("replaying")) $("#overDlg").showModal(); }, reduced() ? 300 : 2800);
 }
 $("#againBtn").onclick = () => {
   $("#overDlg").close();
@@ -1154,7 +1226,9 @@ async function playReel(record) {
   const cap = banner.querySelector(".cap");
   let rec = null;
   if (record) rec = startRecording(() => cap.textContent);
-  const R = ui.reel, moments = pickMoments(R.moments);
+  const R = ui.reel;
+  const mineOnly = record && ui.you != null && !ui.spectating ? R.moments.filter(m => m.ev.pid === ui.you || m.ev.tid === ui.you) : [];
+  const moments = mineOnly.length >= 2 ? pickMoments(mineOnly).slice(-6) : pickMoments(R.moments);
   const nm = id => R.start.find(p => p.id === id)?.name || "?";
   stage.setPlayers(R.start, R.cap);
   stage.setActive(null);
@@ -1163,7 +1237,7 @@ async function playReel(record) {
     stage.update({ players: m.before, rules: { lives: R.cap } });
     stage.setActive(m.ev.pid);
     await stage.giveGun(m.ev.pid, lookOf(R.start.find(p => p.id === m.ev.pid)), true);
-    cap.textContent = `Round ${m.round}: ${nm(m.ev.pid)} ${m.ev.pid === m.ev.tid ? "pulls on themself" : "pulls on " + nm(m.ev.tid)}`;
+    cap.textContent = `Round ${m.round}: ${nm(m.ev.pid)} ${m.ev.pid === m.ev.tid ? "shoots themself" : "shoots at " + nm(m.ev.tid)}`;
     announce(cap.textContent);
     sCock(); sHeart();
     await stage.aim(m.ev.pid, m.ev.tid);
@@ -1249,7 +1323,9 @@ function leaveTable() {
   $("#lobbyRules").innerHTML = "";
   toMenu();
 }
-$("#hudMenu").onclick = () => { const d = $("#tableMenu"); d.returnValue = ""; d.showModal(); };
+$("#hudMenu").onclick = () => { const d = $("#tableMenu"); d.returnValue = ""; syncHurry(); d.showModal(); };
+$("#hudSound").onclick = () => { setMuted(!ls.get("muted", false)); audio(); if (!ls.get("muted", false)) sClick(); };
+setMuted(ls.get("muted", false));
 $("#tableMenu").addEventListener("close", () => {
   const v = $("#tableMenu").returnValue;
   if (v === "leave") leaveTable();
@@ -1267,7 +1343,10 @@ function openPaint() {
   $("#paintName").value = store.name;
   $("#paintName").oninput = e => { const v = e.target.value.trim(); if (v) { store.name = v; preview(); } };
   $("#paintDice").onclick = () => { $("#paintName").value = W.carnivalName([store.name]); store.name = $("#paintName").value; preview(); };
-  const set = (k, v) => { const l = store.look; l[k] = v; store.look = l; preview(); stage.giveGun(0, store.look, false); };
+  const focusFor = k => stage.setPreviewFocus(k === "gun" || k === "finish" ? "gun" : "target");
+  const set = (k, v) => { const l = store.look; l[k] = v; store.look = l; preview(); stage.giveGun(0, store.look, false); focusFor(k); };
+  for (const [sel, k] of [["#pFig", "fig"], ["#pBody", "body"], ["#pTrim", "trim"], ["#pPlate", "plate"], ["#pGun", "gun"], ["#pFinish", "finish"], ["#paintName", "name"]])
+    $(sel).onfocusin = () => focusFor(k);
   tiles($("#pFig"), "fig", W.FIGURES.map((f, i) => ({ value: i, label: f.name })), look.fig, v => set("fig", v));
   for (const [k, el] of [["body", "#pBody"], ["trim", "#pTrim"], ["plate", "#pPlate"]]) {
     const box = $(el); box.innerHTML = "";
@@ -1285,7 +1364,8 @@ function openPaint() {
   }
   tiles($("#pGun"), "gun", W.GUNS.map((g, i) => ({ value: i, label: g })), look.gun, v => set("gun", v));
   tiles($("#pFinish"), "finish", W.FINISHES.map((g, i) => ({ value: i, label: g })), look.finish, v => set("finish", v));
-  dlg.onclose = () => { if (fromMenu) { attract(); $("#menu").classList.remove("hidden"); } syncInset(); };
+  dlg.onclose = () => { stage.setPreviewFocus("target"); if (fromMenu) { attract(); $("#menu").classList.remove("hidden"); } syncInset(); };
+  stage.setPreviewFocus("target");
   dlg.showModal();
   requestAnimationFrame(paintInset);
 }
@@ -1296,7 +1376,7 @@ function openOffice() {
   const g = store.games;
   tiles($("#oAwning"), "awning", W.AWNINGS.map(a => ({
     value: a.id, label: a.name, disabled: g < a.need,
-    sub: g < a.need ? `after ${a.need} games` : ""
+    tip: g < a.need ? `Unlocks after ${a.need} games. You've played ${g}.` : ""
   })), store.awning, v => { store.awning = v; stage.setAwning(W.AWNINGS.find(a => a.id === v).ink); });
   $("#oStreamer").checked = store.streamer;
   $("#oStreamer").onchange = e => { store.streamer = e.target.checked; document.body.classList.toggle("stream", store.streamer); syncDock(); };
@@ -1336,6 +1416,15 @@ $("#officeBtn").onclick = openOffice;
   document.addEventListener("pointerover", e => { const el = e.target.closest("[data-tip]"); if (el && el !== cur && e.pointerType === "mouse") showTip(el); else if (!el && cur) hideTip(); });
   document.addEventListener("focusin", e => { const el = e.target.closest("[data-tip]"); if (el && e.target.matches(":focus-visible")) showTip(el); });
   document.addEventListener("focusout", hideTip);
+  let touchTimer = 0;
+  document.addEventListener("pointerdown", e => {
+    if (e.pointerType === "mouse") return;
+    const el = e.target.closest("[data-tip]");
+    if (!el) { hideTip(); return; }
+    showTip(el);
+    clearTimeout(touchTimer);
+    touchTimer = setTimeout(hideTip, 2200);
+  });
   document.addEventListener("keydown", e => { if (e.key === "Escape") hideTip(); });
   document.addEventListener("scroll", hideTip, true);
 }
@@ -1344,7 +1433,7 @@ $("#officeBtn").onclick = openOffice;
 document.addEventListener("keydown", e => {
   if (e.key === "Escape" && ui.a11yAim != null) { ui.a11yAim = null; stage.unpreview(); announce("Backed out."); }
   if (!ui.canAct || e.target.closest("input, dialog[open]")) return;
-  if (/^[1-7]$/.test(e.key)) { const b = $$("#hand .item")[+e.key - 1]; if (b) { e.preventDefault(); b.click(); } }
+  if (/^[1-7]$/.test(e.key)) { const me = ui.pub?.players.find(p => p.id === ui.you); if (me?.items[+e.key - 1]) { e.preventDefault(); closeTray(); humanItem(+e.key - 1); } }
   if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
     const list = $$(".tbtn.targetable"); if (!list.length) return;
     const i = list.indexOf(document.activeElement);

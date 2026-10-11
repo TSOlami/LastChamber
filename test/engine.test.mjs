@@ -146,3 +146,15 @@ test("calm heat still loads at least one live shell", () => {
     assert.ok(round.live >= 1 && round.live <= 2);
   }
 });
+
+test("the house never cuffs the same player twice running", () => {
+  const st = E.newGame([{ name: "A", bot: true }, { name: "B" }], { itemsPerDeal: 0 });
+  const ev = [];
+  E.beginTurn(st, ev);
+  st.lastCuffed = st.players[1].id;
+  st.players[0].items = ["cuffs"];
+  for (let i = 0; i < 200; i++) {
+    const mv = E.botMove(st);
+    assert.ok(!(mv.a === "item" && st.players[0].items[mv.idx] === "cuffs"), "bot reached for cuffs on a just-cuffed player");
+  }
+});

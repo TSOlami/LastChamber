@@ -37,6 +37,9 @@
     <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></symbol>
     <symbol id="i-save" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 20h14"/></symbol>
     <symbol id="i-code" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10v4M11 10v4M15 10v4M19 10v4"/></symbol>
+    <symbol id="i-sound" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4.5 4.5 0 0 1 0 6M18 6.5a8 8 0 0 1 0 11"/></symbol>
+    <symbol id="i-mute" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></symbol>
+    <symbol id="i-items" viewBox="0 0 24 24"><rect x="3" y="7" width="13" height="9" rx="1.5"/><path d="M8 4h11.5A1.5 1.5 0 0 1 21 5.5V13"/><path d="M7 11.5h5"/></symbol>
     <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
   </defs>
 </svg>
@@ -57,20 +60,20 @@
     <h1 id="boardTitle" class="board-title">Step right up</h1>
     <p class="board-tag">A parlor game of nerve. The counts are public. The order is not.</p>
     <ul class="price-list">
-      <li><button class="price" id="mSolo"><span class="price-name">Solo</span><span class="leader" aria-hidden="true"></span><span class="price-desc">You against the house</span></button></li>
+      <li><button class="price primary" id="mSolo"><span class="price-name">Solo</span><span class="leader" aria-hidden="true"></span><span class="price-desc">You against the house</span></button></li>
       <li><button class="price" id="mHot"><span class="price-name">Hot seat</span><span class="leader" aria-hidden="true"></span><span class="price-desc">One phone, passed around</span></button></li>
       <li><button class="price" id="mOnline"><span class="price-name">Open a table</span><span class="leader" aria-hidden="true"></span><span class="price-desc">Friends join with a code</span></button></li>
     </ul>
     <form class="join-row" id="quickJoin" autocomplete="off">
       <label for="quickCode">Got a code?</label>
-      <input id="quickCode" class="code-in" maxlength="4" inputmode="text" autocapitalize="characters" spellcheck="false" placeholder="KQ7R" aria-describedby="quickErr">
+      <input id="quickCode" class="code-in" maxlength="4" inputmode="text" autocapitalize="characters" spellcheck="false" placeholder="····" aria-describedby="quickErr">
       <button class="btn" type="submit">Join</button>
       <p class="err" id="quickErr" role="alert"></p>
     </form>
     <nav class="board-links" aria-label="More">
-      <button class="linkbtn" id="rulesBtn">How it plays</button>
+      <button class="linkbtn" id="rulesBtn">How to play</button>
       <button class="linkbtn" id="paintBtn">Paint shop</button>
-      <button class="linkbtn" id="officeBtn">Back office</button>
+      <button class="linkbtn" id="officeBtn">Settings</button>
     </nav>
   </section>
 </main>
@@ -107,7 +110,8 @@
 <!-- ============ the table ============ -->
 <section id="game" class="screen hud hidden" aria-label="The table">
   <div class="hud-top">
-    <button class="icon-btn ticket-btn" id="hudMenu" aria-label="Table menu" data-tip="Leave or open the back office"><svg class="i"><use href="#i-menu"/></svg></button>
+    <button class="icon-btn ticket-btn" id="hudMenu" aria-label="Menu" data-tip="Menu, settings, leave"><svg class="i"><use href="#i-menu"/></svg></button>
+    <button class="icon-btn ticket-btn" id="hudSound" aria-label="Sound" aria-pressed="true" data-tip="Sound on or off"><svg class="i"><use href="#i-sound"/></svg></button>
     <button class="code-chip hidden" id="hudCode" aria-label="Show the big code card"><span>Table</span><b id="hudCodeVal"></b></button>
     <span class="watch-chip hidden" id="watchChip">Watching</span>
   </div>
@@ -124,9 +128,15 @@
     <div class="stub" id="stub">
       <p class="stub-prompt" id="prompt">&nbsp;</p>
       <p class="stub-hint" id="hint"></p>
-      <p class="stub-count" id="counts" aria-live="off"></p>
+      <div class="stub-meta"><span class="mylives" id="myLives"></span><span class="stub-count" id="counts"></span></div>
     </div>
-    <div class="hand" id="hand" aria-label="Your items"></div>
+    <div class="items-wrap">
+      <button class="item items-btn hidden" id="itemsBtn" aria-expanded="false" aria-controls="tray" data-tip="Tricks you can play before you shoot"><svg class="i" aria-hidden="true"><use href="#i-items"/></svg>Items <b id="itemsCount">0</b></button>
+      <div class="tray hidden" id="tray" role="dialog" aria-label="Your items">
+        <ul class="tray-list" id="hand"></ul>
+        <p class="tray-note" id="trayNote"></p>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -171,8 +181,8 @@
   <div class="curtain-l" aria-hidden="true"></div><div class="curtain-r" aria-hidden="true"></div>
   <div class="curtain-card">
     <h2 class="curtain-head">Pass it to <span id="passTitle" class="curtain-name"></span></h2>
-    <p class="sub">Their items stay hidden until they take it.</p>
-    <button class="btn gold" id="passOk">I have it</button>
+    <p class="sub">Hand it over. No peeking at their items!</p>
+    <button class="btn gold" id="passOk">Got it, it's me</button>
   </div>
 </dialog>
 
@@ -181,7 +191,7 @@
     <h2 id="peekTitle">Next shell</h2>
     <div class="peek-shell" id="peekShell" aria-live="polite"></div>
     <button class="btn wide hidden" id="peekHold">Hold to look</button>
-    <p class="sub">Only you saw this.</p>
+    <p class="sub">Only you can see this. Keep a straight face.</p>
     <button class="btn gold wide" id="peekOk">Done</button>
   </div>
 </dialog>
@@ -189,6 +199,7 @@
 <dialog class="sheet prize" id="overDlg" aria-labelledby="overTitle">
   <div class="sheet-body">
     <h2 id="overTitle" class="prize-title"></h2>
+    <p class="prize-line" id="overLine"></p>
     <ul class="prize-facts" id="overFacts"></ul>
     <div class="reel-actions">
       <button class="btn" id="reelPlay"><svg class="i"><use href="#i-play"/></svg>Replay the night</button>
@@ -208,7 +219,7 @@
       <h2 id="paintTitle">Paint shop</h2>
       <button class="icon-btn" value="cancel" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
     </header>
-    <p class="sheet-lede">Your target, your enamel. It follows you to every table. Looks only, never odds.</p>
+    <p class="sheet-lede">Make it yours. Looks only, it never changes your odds.</p>
     <div class="field">
       <label for="paintName">Name on the plate</label>
       <div class="name-row">
@@ -229,11 +240,11 @@
 <dialog class="sheet" id="officeDlg" aria-labelledby="officeTitle">
   <form method="dialog" class="sheet-body">
     <header class="sheet-head">
-      <h2 id="officeTitle">Back office</h2>
+      <h2 id="officeTitle">Settings</h2>
       <button class="icon-btn" value="cancel" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
     </header>
     <fieldset class="choice"><legend>Booth canvas</legend><div class="tiles" id="oAwning"></div></fieldset>
-    <label class="toggle"><input type="checkbox" id="oStreamer"><span class="lever" aria-hidden="true"></span><span>Streamer mode<small>Peeks need a press and hold, and the big code card stays on screen.</small></span></label>
+    <label class="toggle" data-tip="Peeks stay hidden until you press and hold, and your table code stays on screen for viewers."><input type="checkbox" id="oStreamer"><span class="lever" aria-hidden="true"></span><span>Streamer mode</span></label>
     <fieldset class="choice"><legend>Motion</legend><div class="tiles" id="oMotion"></div></fieldset>
     <div class="field">
       <label for="oVolume">Volume</label>
@@ -247,12 +258,13 @@
 <dialog class="sheet" id="tableMenu" aria-labelledby="tmTitle">
   <form method="dialog" class="sheet-body">
     <header class="sheet-head">
-      <h2 id="tmTitle">The table</h2>
+      <h2 id="tmTitle">Menu</h2>
       <button class="icon-btn" value="cancel" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
     </header>
     <div class="actions stack">
-      <button class="btn" value="rules" id="tmRules">How it plays</button>
-      <button class="btn" value="office" id="tmOffice">Back office</button>
+      <button class="btn" type="button" id="tmHurry" aria-pressed="false">Speed up the bots</button>
+      <button class="btn" value="rules" id="tmRules">How to play</button>
+      <button class="btn" value="office" id="tmOffice">Settings</button>
       <button class="btn" value="leave" id="tmLeave">Leave the table</button>
       <button class="btn gold" value="cancel">Keep playing</button>
     </div>
@@ -277,37 +289,37 @@
     <path d="M22 30V10a4 4 0 0 1 8 0v16l2-1a4 4 0 0 1 5 2l1 1a4 4 0 0 1 5 1l1 1a4 4 0 0 1 6 3v13c0 8-6 14-14 14h-3c-5 0-9-2-12-6L12 41a4 4 0 0 1 6-5z" fill="#f2dfb4" stroke="#14100d" stroke-width="2.5" stroke-linejoin="round"/>
   </svg>
   <div class="coach-card" id="coachCard" role="dialog" aria-labelledby="coachTitle">
-    <h2 id="coachTitle">Hold a target to aim</h2>
-    <p>Keep holding until the ring fills, then let go to pull the trigger. Slide off to back out.</p>
-    <p class="sub">Aim at yourself and hit a blank: the gun stays in your hand for another go.</p>
-    <button class="linkbtn" id="coachSkip">I've got it</button>
+    <h2 id="coachTitle">Press and hold someone to aim</h2>
+    <p>Let go to shoot. Changed your mind? Slide your finger off.</p>
+    <p class="sub">Feeling lucky? Shoot yourself. If it's a blank, you go again.</p>
+    <button class="linkbtn" id="coachSkip">Got it</button>
   </div>
 </div>
 
 <dialog class="sheet" id="rulesDlg" aria-labelledby="rulesTitle">
   <form method="dialog" class="sheet-body">
     <header class="sheet-head">
-      <h2 id="rulesTitle">How it plays</h2>
+      <h2 id="rulesTitle">How to play</h2>
       <button class="icon-btn" value="cancel" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
     </header>
     <ol class="rules-list">
-      <li><b>The counts are public</b>Each round the barker loads live and blank shells. Everyone sees how many of each. Nobody sees the order.</li>
-      <li><b>Hold a target, let go to pull</b>A live shell knocks that target down and costs it a life. A blank does nothing.</li>
-      <li><b>Pull on yourself to gamble</b>Hit a blank on yourself and you keep the gun for another go. Hit a live one and it costs you.</li>
-      <li><b>Items are optional tricks</b>Tap an item to read what it does, tap it again to use it. The last target standing takes the prize.</li>
+      <li><b>You know the count, not the order</b>Each round the gun gets some live shells and some blanks. Everyone sees how many. Nobody knows which comes next.</li>
+      <li><b>Press, hold, let go</b>Press and hold someone to aim at them, then let go to shoot. A live shell costs them a life. A blank does nothing.</li>
+      <li><b>Shoot yourself if you dare</b>If it's a blank, you get another turn. If it's live, ouch.</li>
+      <li><b>Last one standing wins</b>Items are optional tricks. Open your Items to see what they do.</li>
     </ol>
-    <div class="actions"><button class="btn gold" value="done" id="rulesGo">Got it</button></div>
+    <div class="actions"><button class="btn gold" value="done" id="rulesGo">Let's play</button></div>
   </form>
 </dialog>
 
 <dialog class="slip" id="outDlg" aria-labelledby="outTitle">
   <div class="slip-body">
-    <h2 id="outTitle">You're out</h2>
-    <p class="sub">Your target stays down for the rest of the night. The rail plays on without you.</p>
+    <h2 id="outTitle">You're out!</h2>
+    <p class="sub">Out of lives. Stick around to see who wins?</p>
     <div class="actions stack">
-      <button class="btn gold" id="outWatch">Watch the rest</button>
-      <button class="btn" id="outFast">Fast-forward to the end</button>
-      <button class="btn" id="outAgain">Deal again</button>
+      <button class="btn gold" id="outWatch">Keep watching</button>
+      <button class="btn" id="outFast">Skip to the end</button>
+      <button class="btn" id="outAgain">Play again</button>
     </div>
   </div>
 </dialog>

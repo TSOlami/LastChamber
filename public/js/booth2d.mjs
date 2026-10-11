@@ -2,7 +2,8 @@
    Same stage API as booth3d.mjs. Painted tin targets swing on CSS 3D hinges,
    the gun rides the counter track, the tally flips, the bulbs chase. */
 
-import { INKS, paintTarget, seededLook, cleanLook, fontsReady } from "./world.mjs";
+import { INKS, seededLook, cleanLook, fontsReady } from "./world.mjs";
+import { paintAutomaton } from "./automaton2d.mjs";
 
 function spring(s, target, k, d, dt) { const a = (target - s.x) * k - s.v * d; s.v += a * dt; s.x += s.v * dt; }
 const FINISH = ["#2b3038", "#b9893a", "#c9c6bd"];
@@ -106,15 +107,22 @@ export async function createBooth2D(host, opts = {}) {
 
   function makeTarget(p, cap) {
     const look = p.look ? cleanLook(p.look) : seededLook(p.name);
-    const t = { pid: p.id, name: p.name, look, cap, lives: p.lives, alive: p.alive, dents: [],
-      ang: { x: p.alive ? 0 : 88, v: 0 }, rest: p.alive ? 0 : 88, wob: 0 };
+    const t = { pid: p.id, name: p.name, look, cap, lives: p.lives, alive: p.alive, mood: "neutral",
+      ang: { x: p.alive ? 0 : 1, v: 0 }, rest: p.alive ? 0 : 1, wob: 0 };
     t.el = el("tg", tgWrap);
-    t.canvas = paintTarget(p, { cap, lives: p.lives, dents: t.dents });
+    t.canvas = paintAutomaton(p, { cap, lives: p.lives, out: !p.alive });
     t.el.appendChild(t.canvas);
     return t;
   }
   const tgt = pid => targets.find(t => t.pid === pid);
-  const repaint = t => paintTarget({ name: t.name, look: t.look }, { canvas: t.canvas, cap: t.cap, lives: t.lives, dents: t.dents });
+  const repaint = t => paintAutomaton({ name: t.name, look: t.look }, { canvas: t.canvas, cap: t.cap, lives: t.lives, out: !t.alive, mood: t.mood });
+  /* a mood for a while, then back to another */
+  function feel(t, mood, ms, after) {
+    if (!t || !t.alive) return;
+    t.mood = mood; repaint(t);
+    clearTimeout(t.moodTimer);
+    if (ms) t.moodTimer = setTimeout(() => { if (t.alive) { t.mood = after || "neutral"; repaint(t); } }, reduced() ? Math.min(ms, 400) : ms);
+  }
   function setGun(look) {
     const L = [26, 40, 56][look.gun ?? 1], col = FINISH[look.finish ?? 0];
     gun.innerHTML = `<svg viewBox="0 0 ${60 + L} 60" width="100%"><g fill="${col}" stroke="#0a0806" stroke-width="2">
@@ -130,10 +138,10 @@ export async function createBooth2D(host, opts = {}) {
     const dt = Math.min((now - last) / 1000, 1 / 30); last = now; t0 += dt;
     const rm = reduced();
     for (const t of targets) {
-      spring(t.ang, t.rest, 70, rm ? 16 : 7, dt);
-      if (t.ang.x > 89) { t.ang.x = 89; t.ang.v *= -.25; }
+      spring(t.ang, t.rest, 60, rm ? 16 : 8, dt);
       t.wob *= Math.pow(.02, dt);
-      t.el.style.transform = `perspective(600px) rotateX(${t.ang.x}deg) rotateZ(${t.wob * Math.sin(t0 * 21) * 30}deg)`;
+      /* slump: sink and lean, never fall flat */
+      t.el.style.transform = `translateY(${t.ang.x * 18}%) rotateZ(${t.ang.x * 9 + t.wob * Math.sin(t0 * 21) * 30}deg)`;
       t.el.style.filter = t.alive ? "" : "brightness(.55)";
     }
     const at = tgt(activePid);
@@ -170,6 +178,7 @@ export async function createBooth2D(host, opts = {}) {
     setAfterRender(fn) { afterRender = fn; },
     setMode(m) { mode = m; layout(); },
     setInset() {},
+    setPreviewFocus() {},
     setAwning(ink) { root.style.setProperty("--stripe", INKS[ink].base); },
     setSign: paintSign,
     setPlayers(players, cap = 3) { tgWrap.innerHTML = ""; targets = players.map(p => makeTarget(p, cap)); layout(); },
@@ -178,7 +187,7 @@ export async function createBooth2D(host, opts = {}) {
         const t = tgt(p.id); if (!t) continue;
         const cap = pub.rules?.lives ?? t.cap;
         if (t.lives !== p.lives || t.cap !== cap) { t.lives = p.lives; t.cap = cap; repaint(t); }
-        if (t.alive !== p.alive) { t.alive = p.alive; t.rest = p.alive ? 0 : 88; }
+        if (t.alive !== p.alive) { t.alive = p.alive; t.rest = p.alive ? 0 : 1; t.mood = "neutral"; repaint(t); }
       }
     },
     setActive(pid) { activePid = pid; },
@@ -191,8 +200,8 @@ export async function createBooth2D(host, opts = {}) {
     },
     setBulbs(m) { bulbMode = m; },
     sweep(on) { sweeping = !!on; if (!on) aimTarget = 0; },
-    preview(tid) { const t = tgt(tid); if (!t) return; previewing = true; aimTarget = (t.xf - carX.x) * 120; bulbMode = "dim"; },
-    unpreview() { previewing = false; aimTarget = 0; bulbMode = sweeping ? "chase" : "steady"; },
+    preview(tid) { const t = tgt(tid); if (!t) return; previewing = true; aimTarget = (t.xf - carX.x) * 120; bulbMode = "dim"; feel(t, "scared"); },
+    unpreview() { previewing = false; aimTarget = 0; bulbMode = sweeping ? "chase" : "steady"; for (const t of targets) if (t.mood === "scared") feel(t, "neutral"); },
     async beat(on, ms = 700) { await sleep(reduced() ? Math.min(ms, 250) : ms); },
     round(r, live, blank) { setRack(live, blank); [r, live, blank].forEach((v, i) => flipTo(i, v)); },
     counts(r, live, blank) { if (rack.childElementCount !== live + blank) setRack(live, blank); [r, live, blank].forEach((v, i) => flipTo(i, v)); },
@@ -200,6 +209,7 @@ export async function createBooth2D(host, opts = {}) {
       const t = tgt(tid); if (!t) return;
       aimTarget = (t.xf - carX.x) * 120;
       bulbMode = "dim";
+      feel(t, "scared");
       await sleep(ms ?? (reduced() ? 300 : 1250));
     },
     async fire({ tid, live, shielded, killed }) {
@@ -207,11 +217,10 @@ export async function createBooth2D(host, opts = {}) {
       if (live) {
         kick.v = reduced() ? 2 : 9;
         if (t && !shielded) {
-          t.ang.v = reduced() ? 300 : 900; t.wob = .1;
-          if (!killed) { t.dents.push([Math.random(), Math.random()]); t.rest = 88; setTimeout(() => { if (t.alive) { t.rest = 0; repaint(t); } }, reduced() ? 300 : 900); }
-          else t.rest = 88;
-        } else if (t) t.wob = .25;
-      } else if (t) { t.wob = .35; kick.v = 1.5; }
+          t.ang.v = reduced() ? 2 : 6; t.wob = .1;
+          feel(t, "hurt", 1100, "neutral");
+        } else if (t) { t.wob = .25; feel(t, "relief", 900); }
+      } else if (t) { t.wob = .35; kick.v = 1.5; feel(t, "relief", 1100); }
       smoke(carX.x, root.clientHeight * .74);
       await sleep(reduced() ? 500 : 1100);
       bulbMode = "steady"; aimTarget = 0;
@@ -220,14 +229,15 @@ export async function createBooth2D(host, opts = {}) {
     spin() { aimR.v += 400; },
     cheer(pid) {
       const t = tgt(pid); if (!t) return;
-      let n = 0; const hop = () => { if (n++ > 5) return; t.ang.v = -300; setTimeout(hop, 380); }; hop();
+      feel(t, "joy");
+      let n = 0; const hop = () => { if (n++ > 5) return; t.ang.v = -4; setTimeout(hop, 380); }; hop();
       activePid = pid; bulbMode = "full";
     },
     screenBox(pid) {
       const t = tgt(pid); if (!t) return null;
       const r = t.el.getBoundingClientRect(), hr = host.getBoundingClientRect();
       const w = r.width, h = t.canvas.offsetHeight || w * 1.5;
-      return { x: r.left - hr.left, y: railY() - h, w, h, down: t.ang.x > 50 };
+      return { x: r.left - hr.left, y: railY() - h, w, h, down: !t.alive };
     },
     pause() {},
     destroy() { cancelAnimationFrame(raf); ro.disconnect(); root.remove(); }
